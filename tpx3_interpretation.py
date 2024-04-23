@@ -1,9 +1,6 @@
-from tqdm import tqdm
 import numpy as np
 import tables as tb
 import sys
-
-from numba import njit
 
 from basil.utils.BitLogic import BitLogic
 
