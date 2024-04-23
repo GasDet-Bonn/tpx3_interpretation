@@ -1,4 +1,4 @@
-# Interpreation of tpx3-daq data
+# Interpretation of tpx3-daq data
 
 The purpose of this python script is to interpret raw Timepix3 data recorded
 with [tpx3-daq](https://github.com/GasDet-Bonn/tpx3-daq). The script expects
