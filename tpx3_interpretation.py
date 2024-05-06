@@ -4,6 +4,10 @@ import sys
 
 from basil.utils.BitLogic import BitLogic
 
+class AssignmentError(Exception):
+    def __init__(self, message):
+        self.message = message
+
 # Initialize the look up tables for decoding
 _lfsr_4_lut = np.zeros((2 ** 4), dtype=np.uint16)
 _lfsr_10_lut = np.zeros((2 ** 10), dtype=np.uint16)
@@ -101,8 +105,22 @@ def interpret_data(meta_data, raw_data, op_mode, vco, scan_id):
         timestamps_1_indices = timestamps_indices[timestamps_1_filter]
 
         # Combine the timestamp bits of word 0 and word 1 to the full 48-bit ToA extension
-        full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
-        full_timestamps_indices = timestamps_0_indices
+        if len(timestamps_1) == len(timestamps_0):
+            full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
+            full_timestamps_indices = timestamps_0_indices
+        elif len(timestamps_1) + 1 == len(timestamps_0):
+            full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0[:-1], 0xfff000)
+            full_timestamps_indices = timestamps_0_indices[:-1]
+        elif len(timestamps_1) == len(timestamps_0) + 1:
+            full_timestamps = np.left_shift(np.bitwise_and(timestamps_1[:-1], 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
+            full_timestamps_indices = timestamps_0_indices
+        else:
+            try:
+                raise AssignmentError("Words for timestamps do not match - assignment not possible")
+            except AssignmentError as error:
+                print(error)
+                print("Stop interpretation")
+                quit()
 
     # Split the hit word list up into lists of words for the individual chip links
     # First: create the filer for this
@@ -173,24 +191,150 @@ def interpret_data(meta_data, raw_data, op_mode, vco, scan_id):
     link7_words1 = np.right_shift(np.bitwise_and(link7_words[link7_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
 
     # Third: Combine word 0 and word 1 to the full 48-bit hit word
-    link0_hits = np.left_shift(link0_words0, 24) + link0_words1
-    link1_hits = np.left_shift(link1_words0, 24) + link1_words1
-    link2_hits = np.left_shift(link2_words0, 24) + link2_words1
-    link3_hits = np.left_shift(link3_words0, 24) + link3_words1
-    link4_hits = np.left_shift(link4_words0, 24) + link4_words1
-    link5_hits = np.left_shift(link5_words0, 24) + link5_words1
-    link6_hits = np.left_shift(link6_words0, 24) + link6_words1
-    link7_hits = np.left_shift(link7_words0, 24) + link7_words1
-
     # Fourth: Apply the filter to the indices - Use the index of word 0 als index for the full hit
-    link0_hits_indices = link0_words_indices[link0_words0_filter]
-    link1_hits_indices = link1_words_indices[link1_words0_filter]
-    link2_hits_indices = link2_words_indices[link2_words0_filter]
-    link3_hits_indices = link3_words_indices[link3_words0_filter]
-    link4_hits_indices = link4_words_indices[link4_words0_filter]
-    link5_hits_indices = link5_words_indices[link5_words0_filter]
-    link6_hits_indices = link6_words_indices[link6_words0_filter]
-    link7_hits_indices = link7_words_indices[link7_words0_filter]
+    print(len(link0_words0), len(link0_words1))
+    print(len(link1_words0), len(link1_words1))
+    print(len(link2_words0), len(link2_words1))
+    print(len(link3_words0), len(link3_words1))
+    print(len(link4_words0), len(link4_words1))
+    print(len(link5_words0), len(link5_words1))
+    print(len(link6_words0), len(link6_words1))
+    print(len(link7_words0), len(link7_words1))
+    if len(link0_words0) == len(link0_words1):
+        link0_hits = np.left_shift(link0_words0, 24) + link0_words1
+        link0_hits_indices = link0_words_indices[link0_words0_filter]
+    elif len(link0_words0) + 1 == len(link0_words1):
+        link0_hits = np.left_shift(link0_words0, 24) + link0_words1[:-1]
+        link0_hits_indices = link0_words_indices[link0_words0_filter]
+    elif len(link0_words0) == len(link0_words1) + 1:
+        link0_hits = np.left_shift(link0_words0[:-1], 24) + link0_words1
+        link0_hits_indices = link0_words_indices[link0_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 0 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link1_words0) == len(link1_words1):
+        link1_hits = np.left_shift(link1_words0, 24) + link1_words1
+        link1_hits_indices = link1_words_indices[link1_words0_filter]
+    elif len(link1_words0) + 1 == len(link1_words1):
+        link1_hits = np.left_shift(link1_words0, 24) + link1_words1[:-1]
+        link1_hits_indices = link1_words_indices[link1_words0_filter]
+    elif len(link1_words0) == len(link1_words1) + 1:
+        link1_hits = np.left_shift(link1_words0[:-1], 24) + link1_words1
+        link1_hits_indices = link1_words_indices[link1_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 1 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link2_words0) == len(link2_words1):
+        link2_hits = np.left_shift(link2_words0, 24) + link2_words1
+        link2_hits_indices = link2_words_indices[link2_words0_filter]
+    elif len(link2_words0) + 1 == len(link2_words1):
+        link2_hits = np.left_shift(link2_words0, 24) + link2_words1[:-1]
+        link2_hits_indices = link2_words_indices[link2_words0_filter]
+    elif len(link2_words0) == len(link2_words1) + 1:
+        link2_hits = np.left_shift(link2_words0[:-1], 24) + link2_words1
+        link2_hits_indices = link2_words_indices[link2_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 2 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link3_words0) == len(link3_words1):
+        link3_hits = np.left_shift(link3_words0, 24) + link3_words1
+        link3_hits_indices = link3_words_indices[link3_words0_filter]
+    elif len(link3_words0) + 1 == len(link3_words1):
+        link3_hits = np.left_shift(link3_words0, 24) + link3_words1[:-1]
+        link3_hits_indices = link3_words_indices[link3_words0_filter]
+    elif len(link3_words0) == len(link3_words1) + 1:
+        link3_hits = np.left_shift(link3_words0[:-1], 24) + link3_words1
+        link3_hits_indices = link3_words_indices[link3_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 3 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link4_words0) == len(link4_words1):
+        link4_hits = np.left_shift(link4_words0, 24) + link4_words1
+        link4_hits_indices = link4_words_indices[link4_words0_filter]
+    elif len(link4_words0) + 1 == len(link4_words1):
+        link4_hits = np.left_shift(link4_words0, 24) + link4_words1[:-1]
+        link4_hits_indices = link4_words_indices[link4_words0_filter]
+    elif len(link4_words0) == len(link4_words1) + 1:
+        link4_hits = np.left_shift(link4_words0[:-1], 24) + link4_words1
+        link4_hits_indices = link4_words_indices[link4_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 4 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link5_words0) == len(link5_words1):
+        link5_hits = np.left_shift(link5_words0, 24) + link5_words1
+        link5_hits_indices = link5_words_indices[link5_words0_filter]
+    elif len(link5_words0) + 1 == len(link5_words1):
+        link5_hits = np.left_shift(link5_words0, 24) + link5_words1[:-1]
+        link5_hits_indices = link5_words_indices[link5_words0_filter]
+    elif len(link5_words0) == len(link5_words1) + 1:
+        link5_hits = np.left_shift(link5_words0[:-1], 24) + link5_words1
+        link5_hits_indices = link5_words_indices[link5_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 5 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link6_words0) == len(link6_words1):
+        link6_hits = np.left_shift(link6_words0, 24) + link6_words1
+        link6_hits_indices = link6_words_indices[link6_words0_filter]
+    elif len(link6_words0) + 1 == len(link6_words1):
+        link6_hits = np.left_shift(link6_words0, 24) + link6_words1[:-1]
+        link6_hits_indices = link6_words_indices[link6_words0_filter]
+    elif len(link6_words0) == len(link6_words1) + 1:
+        link6_hits = np.left_shift(link6_words0[:-1], 24) + link6_words1
+        link6_hits_indices = link6_words_indices[link6_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 6 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
+
+    if len(link7_words0) == len(link7_words1):
+        link7_hits = np.left_shift(link7_words0, 24) + link7_words1
+        link7_hits_indices = link7_words_indices[link7_words0_filter]
+    elif len(link7_words0) + 1 == len(link7_words1):
+        link7_hits = np.left_shift(link7_words0, 24) + link7_words1[:-1]
+        link7_hits_indices = link7_words_indices[link7_words0_filter]
+    elif len(link7_words0) == len(link7_words1) + 1:
+        link7_hits = np.left_shift(link7_words0[:-1], 24) + link7_words1
+        link7_hits_indices = link7_words_indices[link7_words0_filter[:-1]]
+    else:
+        try:
+            raise AssignmentError("Words on link 7 do not match - assignment not possible")
+        except AssignmentError as error:
+            print(error)
+            print("Stop interpretation")
+            quit()
 
     # When there are ToA extensions combine them with the hits
     if scan_id == 'DataTake':
