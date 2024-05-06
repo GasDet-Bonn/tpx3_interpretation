@@ -405,7 +405,7 @@ else:
     if not output_filename.endswith('.h5'):
         print("Please choose a valid output file")
 
-    print("Start interpretation of data")
+    print("Start interpretation of data ", input_filename)
 
     with tb.open_file(input_filename, 'r+') as h5_file_in:
         # Read the meta data and the chip configuration from the hdf5 file
