@@ -364,35 +364,35 @@ def interpret_data(meta_data, raw_data, op_mode, vco, scan_id):
     return pix_data
 
 def save_data(h5_filename_in, h5_filename_out, pix_data):
-        # Open the output file
-        print("Save data to output file")
-        with tb.open_file(h5_filename_out, 'w') as h5_file_out:    
-            # If the interpreted node is already there remove it
-            try:
-                h5_file_out.remove_node(h5_file_out.root.interpreted, recursive=True)
-                print("Node interpreted already there")
-            except:
-                pass
+    # Open the output file
+    print("Save data to output file")
+    with tb.open_file(h5_filename_out, 'w') as h5_file_out:    
+        # If the interpreted node is already there remove it
+        try:
+            h5_file_out.remove_node(h5_file_out.root.interpreted, recursive=True)
+            print("Node interpreted already there")
+        except:
+            pass
 
-            # Create the groups and their attributes
-            interpreted = h5_file_out.create_group(h5_file_out.root, 'interpreted', 'interpreted')
-            h5_file_out.root.interpreted._v_attrs['TimepixVersion'] = np.array('Timepix3'.encode("ascii"), dtype=str)
-            h5_file_out.root.interpreted._v_attrs['centerChip'] = np.array([0])
-            h5_file_out.root.interpreted._v_attrs['runFolderKind'] = np.array('rfUnknown'.encode("ascii"), dtype=str)
-            h5_file_out.root.interpreted._v_attrs['runType'] = np.array('rfXrayFinger'.encode("ascii"), dtype=str)
-            run_0 = h5_file_out.create_group(h5_file_out.root.interpreted, 'run_0', 'run_0')
-            h5_file_out.root.interpreted.run_0._v_attrs['BadBatchCount'] = np.array([0])
-            h5_file_out.root.interpreted.run_0._v_attrs['BadSliceCount'] = np.array([0])
-            h5_file_out.root.interpreted.run_0._v_attrs['batchSize'] = np.array([100000000])
-            h5_file_out.root.interpreted.run_0._v_attrs['numChips'] = np.array([1])
+        # Create the groups and their attributes
+        interpreted = h5_file_out.create_group(h5_file_out.root, 'interpreted', 'interpreted')
+        h5_file_out.root.interpreted._v_attrs['TimepixVersion'] = np.array('Timepix3'.encode("ascii"), dtype=str)
+        h5_file_out.root.interpreted._v_attrs['centerChip'] = np.array([0])
+        h5_file_out.root.interpreted._v_attrs['runFolderKind'] = np.array('rfUnknown'.encode("ascii"), dtype=str)
+        h5_file_out.root.interpreted._v_attrs['runType'] = np.array('rfXrayFinger'.encode("ascii"), dtype=str)
+        run_0 = h5_file_out.create_group(h5_file_out.root.interpreted, 'run_0', 'run_0')
+        h5_file_out.root.interpreted.run_0._v_attrs['BadBatchCount'] = np.array([0])
+        h5_file_out.root.interpreted.run_0._v_attrs['BadSliceCount'] = np.array([0])
+        h5_file_out.root.interpreted.run_0._v_attrs['batchSize'] = np.array([100000000])
+        h5_file_out.root.interpreted.run_0._v_attrs['numChips'] = np.array([1])
 
-            # Create a table with the interpreted data
-            h5_file_out.create_table(h5_file_out.root.interpreted.run_0, 'hit_data', pix_data, filters=tb.Filters(complib='zlib', complevel=2))
+        # Create a table with the interpreted data
+        h5_file_out.create_table(h5_file_out.root.interpreted.run_0, 'hit_data', pix_data, filters=tb.Filters(complib='zlib', complevel=2))
 
-            # Copy the chip configuration from the input file to the output file
-            h5_file_out.create_group(h5_file_out.root.interpreted.run_0, 'configuration', 'Configuration')
-            with tb.open_file(h5_filename_in, 'r+') as h5_file_in:
-                h5_file_in.copy_children(h5_file_in.root.configuration, h5_file_out.root.interpreted.run_0.configuration)
+        # Copy the chip configuration from the input file to the output file
+        h5_file_out.create_group(h5_file_out.root.interpreted.run_0, 'configuration', 'Configuration')
+        with tb.open_file(h5_filename_in, 'r+') as h5_file_in:
+            h5_file_in.copy_children(h5_file_in.root.configuration, h5_file_out.root.interpreted.run_0.configuration)
 
 if len(sys.argv) != 3:
     print("Please enter the data paths of the input and the output file (python tpx3_interpretation.py <input path> <output path>)")
