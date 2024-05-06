@@ -81,9 +81,8 @@ for j in range(2**14):
         gray_decrypt_v[i]=gray_decrypt_v[i+1]^encoded_value[i]
     _gray_14_lut[j] = gray_decrypt_v.tovalue()
 
-def interpret_data(meta_data, raw_data, op_mode, vco, scan_id):
+def interpret_data(meta_data, raw_data, raw_indices, op_mode, vco, scan_id):
     # Based on the headers, filter for hit words and create a list of these words and a list of their indices
-    raw_indices = (np.arange(meta_data['index_start'][0], meta_data['index_stop'][-1], 1)).astype(np.uint64)
     hit_filter = np.where(np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) != 0b0101)
     hits = raw_data[hit_filter]
     hits_indices = raw_indices[hit_filter]
@@ -562,10 +561,20 @@ else:
 
         # Read the data onto arrays
         meta_data_tmp = meta_data[0:]
-        raw_data = h5_file_in.root.raw_data[meta_data_tmp['index_start'][0]:meta_data_tmp['index_stop'][-1]]
+        discard_errors = meta_data_tmp['discard_error']
+        decode_errors = meta_data_tmp['decode_error']
+        errors = discard_errors + decode_errors
+        meta_data_tmp = meta_data[np.where(errors == 0)[0]]
+
         start_indices = meta_data_tmp['index_start']
+        stop_indices = meta_data_tmp['index_stop']
+        indices = []
+        for i in range(len(start_indices)):
+            indices.append(np.arange(start_indices[i], stop_indices[i], 1, dtype=int)[:])
+        indices = np.concatenate(indices)
+        raw_data = h5_file_in.root.raw_data[indices]
         scan_param_id = meta_data_tmp['scan_param_id']
         chunk_start_time = meta_data_tmp['timestamp_start']
-    
-    pix_data = interpret_data(meta_data_tmp, raw_data, op_mode, vco, scan_id)
+
+    pix_data = interpret_data(meta_data_tmp, raw_data, indices, op_mode, vco, scan_id)
     save_data(input_filename, output_filename, pix_data)
