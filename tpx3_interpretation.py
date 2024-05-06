@@ -566,9 +566,7 @@ else:
 
         start_indices = meta_data_tmp['index_start']
         stop_indices = meta_data_tmp['index_stop']
-        indices = []
-        for i in range(len(start_indices)):
-            indices.append(np.arange(start_indices[i], stop_indices[i], 1, dtype=int)[:])
+        indices = [np.arange(start, stop, 1, dtype=int) for start, stop in zip(start_indices, stop_indices)]
         indices = np.concatenate(indices)
         raw_data = h5_file_in.root.raw_data[indices]
         scan_param_id = meta_data_tmp['scan_param_id']
