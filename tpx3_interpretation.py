@@ -562,15 +562,122 @@ else:
         discard_errors = meta_data_tmp['discard_error']
         decode_errors = meta_data_tmp['decode_error']
         errors = discard_errors + decode_errors
-        meta_data_tmp = meta_data[np.where(errors == 0)[0]]
-
         start_indices = meta_data_tmp['index_start']
         stop_indices = meta_data_tmp['index_stop']
-        indices = [np.arange(start, stop, 1, dtype=int) for start, stop in zip(start_indices, stop_indices)]
-        indices = np.concatenate(indices)
-        raw_data = h5_file_in.root.raw_data[indices]
+        indices = np.array([np.arange(start, stop, 1, dtype=int) for start, stop in zip(start_indices, stop_indices)], dtype=object)
         scan_param_id = meta_data_tmp['scan_param_id']
         chunk_start_time = meta_data_tmp['timestamp_start']
+
+        # Get the chunks and the indices of data packages after chunks with errors
+        chunks_after_errors = np.where(errors != 0)[0] + 1
+        if chunks_after_errors[-1] > (len(indices) - 1):
+            chunks_after_errors = chunks_after_errors[:-1]
+        indices_after_errors = indices[chunks_after_errors]
+
+        chunk_number = 0
+        # Go through the chunks after chunks with errors to delete the first word if its word 0 instead of 1
+        for chunk_indices in indices_after_errors:
+            # Based on the headers, filter for hit words and create a list of these words and a list of their indices
+            current_raw_data = h5_file_in.root.raw_data[chunk_indices]
+            hit_filter = np.where(np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) != 0b0101)
+            hits = current_raw_data[hit_filter]
+            hits_indices = chunk_indices[hit_filter]
+
+            # Only in "DataTake" the ToA extensions are active
+            if scan_id == 'DataTake':
+                # Based on the headers, filter for ToA extension words and create a list of these words and a list of their indices
+                timestamp_map = np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) == 0b0101
+                timestamp_filter = np.where(timestamp_map == True)
+                timestamps = current_raw_data[timestamp_filter]
+                timestamps_indices = chunk_indices[timestamp_filter]
+
+                # Split the lists in separate lists for word 0 and word 1 (based on header)
+                timestamps_0_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b01)[0]
+                timestamps_1_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b10)[0]
+
+            # Split the hit word list up into lists of words for the individual chip links
+            # First: create the filer for this
+            link0_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000000)
+            link1_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000010)
+            link2_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000100)
+            link3_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000110)
+            link4_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001000)
+            link5_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001010)
+            link6_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001100)
+            link7_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001110)
+
+            # Second: Filter the words
+            link0_words = hits[link0_hits_filter]
+            link1_words = hits[link1_hits_filter]
+            link2_words = hits[link2_hits_filter]
+            link3_words = hits[link3_hits_filter]
+            link4_words = hits[link4_hits_filter]
+            link5_words = hits[link5_hits_filter]
+            link6_words = hits[link6_hits_filter]
+            link7_words = hits[link7_hits_filter]
+
+            # Third: Apply the filter also to the indices
+            link0_words_indices = hits_indices[link0_hits_filter]
+            link1_words_indices = hits_indices[link1_hits_filter]
+            link2_words_indices = hits_indices[link2_hits_filter]
+            link3_words_indices = hits_indices[link3_hits_filter]
+            link4_words_indices = hits_indices[link4_hits_filter]
+            link5_words_indices = hits_indices[link5_hits_filter]
+            link6_words_indices = hits_indices[link6_hits_filter]
+            link7_words_indices = hits_indices[link7_hits_filter]
+
+            # Split the hit list for the links up into separate lists with word 0 and word 1
+            # First: create the filter
+            link0_words0_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b0)[0]
+            link0_words1_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b1)[0]
+            link1_words0_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b0)[0]
+            link1_words1_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b1)[0]
+            link2_words0_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b0)[0]
+            link2_words1_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b1)[0]
+            link3_words0_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b0)[0]
+            link3_words1_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b1)[0]
+            link4_words0_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b0)[0]
+            link4_words1_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b1)[0]
+            link5_words0_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b0)[0]
+            link5_words1_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b1)[0]
+            link6_words0_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b0)[0]
+            link6_words1_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b1)[0]
+            link7_words0_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b0)[0]
+            link7_words1_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b1)[0]
+
+            # Remove first dataword if chunk starts with dataword 0 instead of 1
+            removed_indices = []
+            if scan_id == 'DataTake':
+                if timestamps_0_filter[0] < timestamps_1_filter[0]:
+                    removed_indices.append(timestamps_indices[0])             
+            if link0_words0_filter[0] < link0_words1_filter[0]:
+                removed_indices.append(link0_words_indices[0])
+            if link1_words0_filter[0] < link1_words1_filter[0]:
+                removed_indices.append(link1_words_indices[0])
+            if link2_words0_filter[0] < link2_words1_filter[0]:
+                removed_indices.append(link2_words_indices[0])
+            if link3_words0_filter[0] < link3_words1_filter[0]:
+                removed_indices.append(link3_words_indices[0])
+            if link4_words0_filter[0] < link4_words1_filter[0]:
+                removed_indices.append(link4_words_indices[0])
+            if link5_words0_filter[0] < link5_words1_filter[0]:
+                removed_indices.append(link5_words_indices[0])
+            if link6_words0_filter[0] < link6_words1_filter[0]:
+                removed_indices.append(link6_words_indices[0])
+            if link7_words0_filter[0] < link7_words1_filter[0]:
+                removed_indices.append(link7_words_indices[0])
+
+            # Remove the words from the index list
+            new_indices = np.setdiff1d(chunk_indices, removed_indices)
+            indices[chunks_after_errors[chunk_number]] = new_indices
+            chunk_number += 1
+        
+        # Use only chunks that have no discard or decode errors
+        indices = indices[np.where(errors == 0)[0]]
+        indices = np.concatenate(indices)
+        scan_param_id = scan_param_id[np.where(errors == 0)[0]]
+        chunk_start_time = chunk_start_time[np.where(errors == 0)[0]]
+        raw_data = h5_file_in.root.raw_data[indices]
 
     pix_data = interpret_data(meta_data_tmp, raw_data, indices, op_mode, vco, scan_id)
     save_data(input_filename, output_filename, pix_data)
