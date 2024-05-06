@@ -551,7 +551,7 @@ else:
 
     print("Start interpretation of data ", input_filename)
 
-    with tb.open_file(input_filename, 'r+') as h5_file_in:
+    with tb.open_file(input_filename, 'r') as h5_file_in:
         # Read the meta data and the chip configuration from the hdf5 file
         meta_data = h5_file_in.root.meta_data[:]
         run_config = h5_file_in.root.configuration.run_config[:]
