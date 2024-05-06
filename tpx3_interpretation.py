@@ -500,8 +500,6 @@ def interpret_data(meta_data, raw_data, raw_indices, op_mode, vco, scan_id):
             pix_data['TOA_Combined'] = np.zeros(len(data))
 
     print("Order data by timestamp")
-    #for i in range(len(pix_data['TOA_Combined'])):
-    #    print(pix_data['TOA_Combined'], pix_data['TOA_Combined'].argsort())
     pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
 
     return pix_data
