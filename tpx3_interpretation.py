@@ -195,14 +195,6 @@ def interpret_data(args):
 
     # Third: Combine word 0 and word 1 to the full 48-bit hit word
     # Fourth: Apply the filter to the indices - Use the index of word 0 als index for the full hit
-    print(len(link0_words0), len(link0_words1))
-    print(len(link1_words0), len(link1_words1))
-    print(len(link2_words0), len(link2_words1))
-    print(len(link3_words0), len(link3_words1))
-    print(len(link4_words0), len(link4_words1))
-    print(len(link5_words0), len(link5_words1))
-    print(len(link6_words0), len(link6_words1))
-    print(len(link7_words0), len(link7_words1))
     if len(link0_words0) == len(link0_words1):
         link0_hits = np.left_shift(link0_words0, 24) + link0_words1
         link0_hits_indices = link0_words_indices[link0_words0_filter]
