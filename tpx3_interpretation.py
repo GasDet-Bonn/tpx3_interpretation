@@ -81,7 +81,7 @@ for j in range(2**14):
         gray_decrypt_v[i]=gray_decrypt_v[i+1]^encoded_value[i]
     _gray_14_lut[j] = gray_decrypt_v.tovalue()
 
-def interpret_data(meta_data, raw_data, raw_indices, op_mode, vco, scan_id):
+def interpret_data(raw_data, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time):
     # Based on the headers, filter for hit words and create a list of these words and a list of their indices
     hit_filter = np.where(np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) != 0b0101)
     hits = raw_data[hit_filter]
@@ -567,16 +567,23 @@ else:
         indices = np.array([np.arange(start, stop, 1, dtype=int) for start, stop in zip(start_indices, stop_indices)], dtype=object)
         scan_param_id = meta_data_tmp['scan_param_id']
         chunk_start_time = meta_data_tmp['timestamp_start']
+        discarded_packages = 0
 
         # Get the chunks and the indices of data packages after chunks with errors
         chunks_after_errors = np.where(errors != 0)[0] + 1
-        if chunks_after_errors[-1] > (len(indices) - 1):
-            chunks_after_errors = chunks_after_errors[:-1]
-        indices_after_errors = indices[chunks_after_errors]
+        if len(chunks_after_errors) > 0:
+            if chunks_after_errors[-1] > (len(indices) - 1):
+                chunks_after_errors = chunks_after_errors[:-1]
+            #indices_after_errors = indices[chunks_after_errors]
+        
+        for i, chunk_indices in enumerate(indices):
+            # For chunks with errors do noting as they are anyway discarded
+            if errors[i] != 0:
+                continue
+            # Ignore chunks without data
+            if len(chunk_indices) == 0:
+                continue
 
-        chunk_number = 0
-        # Go through the chunks after chunks with errors to delete the first word if its word 0 instead of 1
-        for chunk_indices in indices_after_errors:
             # Based on the headers, filter for hit words and create a list of these words and a list of their indices
             current_raw_data = h5_file_in.root.raw_data[chunk_indices]
             hit_filter = np.where(np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) != 0b0101)
@@ -645,39 +652,120 @@ else:
             link7_words0_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b0)[0]
             link7_words1_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b1)[0]
 
-            # Remove first dataword if chunk starts with dataword 0 instead of 1
+            copy_to_next_chunk = []
+            move_to_next_chunk = []
             removed_indices = []
-            if scan_id == 'DataTake':
-                if timestamps_0_filter[0] < timestamps_1_filter[0]:
-                    removed_indices.append(timestamps_indices[0])             
-            if link0_words0_filter[0] < link0_words1_filter[0]:
-                removed_indices.append(link0_words_indices[0])
-            if link1_words0_filter[0] < link1_words1_filter[0]:
-                removed_indices.append(link1_words_indices[0])
-            if link2_words0_filter[0] < link2_words1_filter[0]:
-                removed_indices.append(link2_words_indices[0])
-            if link3_words0_filter[0] < link3_words1_filter[0]:
-                removed_indices.append(link3_words_indices[0])
-            if link4_words0_filter[0] < link4_words1_filter[0]:
-                removed_indices.append(link4_words_indices[0])
-            if link5_words0_filter[0] < link5_words1_filter[0]:
-                removed_indices.append(link5_words_indices[0])
-            if link6_words0_filter[0] < link6_words1_filter[0]:
-                removed_indices.append(link6_words_indices[0])
-            if link7_words0_filter[0] < link7_words1_filter[0]:
-                removed_indices.append(link7_words_indices[0])
 
-            # Remove the words from the index list
-            new_indices = np.setdiff1d(chunk_indices, removed_indices)
-            indices[chunks_after_errors[chunk_number]] = new_indices
-            chunk_number += 1
+            # If a current chunk is after a chunk with errors remove the first word per link if its the wrong one (word 0 instead of 1)
+            if i in chunks_after_errors:
+                if scan_id == 'DataTake':
+                    if timestamps_0_filter[0] < timestamps_1_filter[0]:
+                        removed_indices.append(timestamps_indices[0])      
+                if link0_words0_filter[0] < link0_words1_filter[0]:
+                    removed_indices.append(link0_words_indices[0])
+                if link1_words0_filter[0] < link1_words1_filter[0]:
+                    removed_indices.append(link1_words_indices[0])
+                if link2_words0_filter[0] < link2_words1_filter[0]:
+                    removed_indices.append(link2_words_indices[0])
+                if link3_words0_filter[0] < link3_words1_filter[0]:
+                    removed_indices.append(link3_words_indices[0])
+                if link4_words0_filter[0] < link4_words1_filter[0]:
+                    removed_indices.append(link4_words_indices[0])
+                if link5_words0_filter[0] < link5_words1_filter[0]:
+                    removed_indices.append(link5_words_indices[0])
+                if link6_words0_filter[0] < link6_words1_filter[0]:
+                    removed_indices.append(link6_words_indices[0])
+                if link7_words0_filter[0] < link7_words1_filter[0]:
+                    removed_indices.append(link7_words_indices[0])
+
+            if i + 1 < len(indices):
+                # If the difference of 0 and 1 packages is bigger than 0 remove the chunk as there is some error
+                if np.abs(len(link0_words0_filter) - len(link0_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link1_words0_filter) - len(link1_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link2_words0_filter) - len(link2_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link3_words0_filter) - len(link3_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link4_words0_filter) - len(link4_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link5_words0_filter) - len(link5_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link6_words0_filter) - len(link6_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+                if np.abs(len(link7_words0_filter) - len(link7_words1_filter)) > 1:
+                    errors[i] += 1
+                    chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    continue
+
+            # If the chunk (per link) ends with a word 1 without fitting word 0 move the word 1 to the next chunk
+            if scan_id == 'DataTake':
+                if timestamps_0_filter[-1] < timestamps_1_filter[-1]:
+                    move_to_next_chunk.append(timestamps_indices[-1])
+                    copy_to_next_chunk.append(timestamps_indices[-3:-1])
+                else:
+                    copy_to_next_chunk.append(timestamps_indices[-2:])
+            if len(link0_words_indices) > 0:
+                if link0_words0_filter[-1] < link0_words1_filter[-1]:
+                    move_to_next_chunk.append(link0_words_indices[-1])
+            if len(link1_words_indices) > 0:
+                if link1_words0_filter[-1] < link1_words1_filter[-1]:
+                    move_to_next_chunk.append(link1_words_indices[-1])
+            if len(link2_words_indices) > 0:
+                if link2_words0_filter[-1] < link2_words1_filter[-1]:
+                    move_to_next_chunk.append(link2_words_indices[-1])
+            if len(link3_words_indices) > 0:
+                if link3_words0_filter[-1] < link3_words1_filter[-1]:
+                    move_to_next_chunk.append(link3_words_indices[-1])
+            if len(link4_words_indices) > 0:
+                if link4_words0_filter[-1] < link4_words1_filter[-1]:
+                    move_to_next_chunk.append(link4_words_indices[-1])
+            if len(link5_words_indices) > 0:
+                if link5_words0_filter[-1] < link5_words1_filter[-1]:
+                    move_to_next_chunk.append(link5_words_indices[-1])
+            if len(link6_words_indices) > 0:
+                if link6_words0_filter[-1] < link6_words1_filter[-1]:
+                    move_to_next_chunk.append(link6_words_indices[-1])
+            if len(link7_words_indices) > 0:
+                if link7_words0_filter[-1] < link7_words1_filter[-1]:
+                    move_to_next_chunk.append(link7_words_indices[-1])
+
+            # Create the new indice lists for the current and the next chunk
+            new_indices = chunk_indices
+            if len(removed_indices) > 0:
+                new_indices = np.setdiff1d(new_indices, removed_indices)
+                discarded_packages += len(removed_indices)
+            if i + 1 < len(indices) and len(move_to_next_chunk) > 0:
+                indices[i+1] = np.append(indices[i+1], move_to_next_chunk)
+                indices[i+1] = np.sort(indices[i+1])
+                new_indices = np.setdiff1d(new_indices, move_to_next_chunk)
+            #if i + 1 < len(indices) and len(copy_to_next_chunk) > 0:
+            #    indices[i+1] = np.append(indices[i+1], copy_to_next_chunk)
+            #    indices[i+1] = np.sort(indices[i+1])
+
+            indices[i] = new_indices
         
-        # Use only chunks that have no discard or decode errors
+        for i, chunk_errors in enumerate(errors):
+            if chunk_errors > 0:
+                discarded_packages += len(indices[i])
         indices = indices[np.where(errors == 0)[0]]
         indices = np.concatenate(indices)
-        scan_param_id = scan_param_id[np.where(errors == 0)[0]]
-        chunk_start_time = chunk_start_time[np.where(errors == 0)[0]]
-        raw_data = h5_file_in.root.raw_data[indices]
+        print("Discarded packages", discarded_packages, "of", stop_indices[-1], "(", 100. * (discarded_packages / stop_indices[-1]), "%)")
 
-    pix_data = interpret_data(meta_data_tmp, raw_data, indices, op_mode, vco, scan_id)
+        pix_data = interpret_data(h5_file_in.root.raw_data[indices], indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time)
     save_data(input_filename, output_filename, pix_data)
