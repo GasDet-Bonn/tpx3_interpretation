@@ -1,6 +1,8 @@
+from tqdm import tqdm
 import numpy as np
 import tables as tb
 import sys
+from multiprocessing import Pool
 
 from basil.utils.BitLogic import BitLogic
 
@@ -81,7 +83,9 @@ for j in range(2**14):
         gray_decrypt_v[i]=gray_decrypt_v[i+1]^encoded_value[i]
     _gray_14_lut[j] = gray_decrypt_v.tovalue()
 
-def interpret_data(raw_data, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time):
+def interpret_data(args):
+    raw_data, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time = args
+
     # Based on the headers, filter for hit words and create a list of these words and a list of their indices
     hit_filter = np.where(np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) != 0b0101)
     hits = raw_data[hit_filter]
@@ -499,7 +503,7 @@ def interpret_data(raw_data, raw_indices, op_mode, vco, scan_id, scan_param_id, 
             pix_data['TOA_Extension'] = np.zeros(len(data))
             pix_data['TOA_Combined'] = np.zeros(len(data))
 
-    print("Order data by timestamp")
+    #print("Order data by timestamp")
     pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
 
     return pix_data
@@ -576,7 +580,9 @@ else:
                 chunks_after_errors = chunks_after_errors[:-1]
             #indices_after_errors = indices[chunks_after_errors]
         
-        for i, chunk_indices in enumerate(indices):
+        print("Correct data")
+        
+        for i, chunk_indices in enumerate(tqdm(indices, desc="Chunk")):
             # For chunks with errors do noting as they are anyway discarded
             if errors[i] != 0:
                 continue
@@ -754,9 +760,9 @@ else:
                 indices[i+1] = np.append(indices[i+1], move_to_next_chunk)
                 indices[i+1] = np.sort(indices[i+1])
                 new_indices = np.setdiff1d(new_indices, move_to_next_chunk)
-            #if i + 1 < len(indices) and len(copy_to_next_chunk) > 0:
-            #    indices[i+1] = np.append(indices[i+1], copy_to_next_chunk)
-            #    indices[i+1] = np.sort(indices[i+1])
+            if i + 1 < len(indices) and len(copy_to_next_chunk) > 0:
+                indices[i+1] = np.append(indices[i+1], copy_to_next_chunk)
+                indices[i+1] = np.sort(indices[i+1])
 
             indices[i] = new_indices
         
@@ -767,5 +773,16 @@ else:
         indices = np.concatenate(indices)
         print("Discarded packages", discarded_packages, "of", stop_indices[-1], "(", 100. * (discarded_packages / stop_indices[-1]), "%)")
 
-        pix_data = interpret_data(h5_file_in.root.raw_data[indices], indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time)
+        args = []
+        print("Prepare interpretation")
+        for index_list in tqdm(indices, desc="Chunk"):
+            args.append([h5_file_in.root.raw_data[index_list], index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time])
+
+        print("Interpret data")
+        with Pool() as pool:
+            pix_data = list(tqdm(pool.imap(interpret_data, args), total=len(args), desc="Chunk"))
+        pix_data = np.concatenate(pix_data)
+
+    print("Order data by timestamp")
+    pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
     save_data(input_filename, output_filename, pix_data)
