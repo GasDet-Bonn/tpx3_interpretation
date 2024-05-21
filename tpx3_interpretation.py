@@ -658,22 +658,46 @@ else:
             if i in chunks_after_errors:
                 if scan_id == 'DataTake':
                     if timestamps_0_filter[0] < timestamps_1_filter[0]:
-                        removed_indices.append(timestamps_indices[0])      
-                if link0_words0_filter[0] < link0_words1_filter[0]:
+                        removed_indices.append(timestamps_indices[0])
+                if len(link0_words_indices) > 1:
+                    if link0_words0_filter[0] < link0_words1_filter[0]:
+                        removed_indices.append(link0_words_indices[0])
+                elif len(link0_words_indices) > 0:
                     removed_indices.append(link0_words_indices[0])
-                if link1_words0_filter[0] < link1_words1_filter[0]:
+                if len(link1_words_indices) > 1:
+                    if link1_words0_filter[0] < link1_words1_filter[0]:
+                        removed_indices.append(link1_words_indices[0])
+                elif len(link1_words_indices) > 0:
                     removed_indices.append(link1_words_indices[0])
-                if link2_words0_filter[0] < link2_words1_filter[0]:
+                if len(link2_words_indices) > 1:
+                    if link2_words0_filter[0] < link2_words1_filter[0]:
+                        removed_indices.append(link2_words_indices[0])
+                elif len(link2_words_indices) > 0:
                     removed_indices.append(link2_words_indices[0])
-                if link3_words0_filter[0] < link3_words1_filter[0]:
+                if len(link3_words_indices) > 1:
+                    if link3_words0_filter[0] < link3_words1_filter[0]:
+                        removed_indices.append(link3_words_indices[0])
+                elif len(link3_words_indices) > 0:
                     removed_indices.append(link3_words_indices[0])
-                if link4_words0_filter[0] < link4_words1_filter[0]:
+                if len(link4_words_indices) > 1:
+                    if link4_words0_filter[0] < link4_words1_filter[0]:
+                        removed_indices.append(link4_words_indices[0])
+                elif len(link4_words_indices) > 0:
                     removed_indices.append(link4_words_indices[0])
-                if link5_words0_filter[0] < link5_words1_filter[0]:
+                if len(link5_words_indices) > 1:
+                    if link5_words0_filter[0] < link5_words1_filter[0]:
+                        removed_indices.append(link5_words_indices[0])
+                elif len(link5_words_indices) > 0:
                     removed_indices.append(link5_words_indices[0])
-                if link6_words0_filter[0] < link6_words1_filter[0]:
+                if len(link6_words_indices) > 1:
+                    if link6_words0_filter[0] < link6_words1_filter[0]:
+                        removed_indices.append(link6_words_indices[0])
+                elif len(link6_words_indices) > 0:
                     removed_indices.append(link6_words_indices[0])
-                if link7_words0_filter[0] < link7_words1_filter[0]:
+                if len(link7_words_indices) > 1:
+                    if link7_words0_filter[0] < link7_words1_filter[0]:
+                        removed_indices.append(link7_words_indices[0])
+                elif len(link7_words_indices) > 0:
                     removed_indices.append(link7_words_indices[0])
 
             if i + 1 < len(indices):
@@ -718,30 +742,46 @@ else:
                     copy_to_next_chunk.append(timestamps_indices[-3:-1])
                 else:
                     copy_to_next_chunk.append(timestamps_indices[-2:])
-            if len(link0_words_indices) > 0:
+            if len(link0_words_indices) > 1:
                 if link0_words0_filter[-1] < link0_words1_filter[-1]:
                     move_to_next_chunk.append(link0_words_indices[-1])
-            if len(link1_words_indices) > 0:
+            elif len(link0_words_indices) > 0:
+                move_to_next_chunk.append(link0_words_indices[-1])
+            if len(link1_words_indices) > 1:
                 if link1_words0_filter[-1] < link1_words1_filter[-1]:
                     move_to_next_chunk.append(link1_words_indices[-1])
-            if len(link2_words_indices) > 0:
+            elif len(link1_words_indices) > 0:
+                move_to_next_chunk.append(link1_words_indices[-1])
+            if len(link2_words_indices) > 1:
                 if link2_words0_filter[-1] < link2_words1_filter[-1]:
                     move_to_next_chunk.append(link2_words_indices[-1])
-            if len(link3_words_indices) > 0:
+            elif len(link2_words_indices) > 0:
+                move_to_next_chunk.append(link2_words_indices[-1])
+            if len(link3_words_indices) > 1:
                 if link3_words0_filter[-1] < link3_words1_filter[-1]:
                     move_to_next_chunk.append(link3_words_indices[-1])
-            if len(link4_words_indices) > 0:
+            elif len(link3_words_indices) > 0:
+                move_to_next_chunk.append(link3_words_indices[-1])
+            if len(link4_words_indices) > 1:
                 if link4_words0_filter[-1] < link4_words1_filter[-1]:
                     move_to_next_chunk.append(link4_words_indices[-1])
-            if len(link5_words_indices) > 0:
+            elif len(link4_words_indices) > 0:
+                move_to_next_chunk.append(link4_words_indices[-1])
+            if len(link5_words_indices) > 1:
                 if link5_words0_filter[-1] < link5_words1_filter[-1]:
                     move_to_next_chunk.append(link5_words_indices[-1])
-            if len(link6_words_indices) > 0:
+            elif len(link5_words_indices) > 0:
+                move_to_next_chunk.append(link5_words_indices[-1])
+            if len(link6_words_indices) > 1:
                 if link6_words0_filter[-1] < link6_words1_filter[-1]:
                     move_to_next_chunk.append(link6_words_indices[-1])
-            if len(link7_words_indices) > 0:
+            elif len(link6_words_indices) > 0:
+                move_to_next_chunk.append(link6_words_indices[-1])
+            if len(link7_words_indices) > 1:
                 if link7_words0_filter[-1] < link7_words1_filter[-1]:
                     move_to_next_chunk.append(link7_words_indices[-1])
+            elif len(link7_words_indices) > 0:
+                move_to_next_chunk.append(link7_words_indices[-1])
 
             # Create the new indice lists for the current and the next chunk
             new_indices = chunk_indices
