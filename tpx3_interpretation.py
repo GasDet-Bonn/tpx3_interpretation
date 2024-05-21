@@ -802,7 +802,6 @@ else:
             if chunk_errors > 0:
                 discarded_packages += len(indices[i])
         indices = indices[np.where(errors == 0)[0]]
-        indices = np.concatenate(indices)
         print("Discarded packages", discarded_packages, "of", stop_indices[-1], "(", 100. * (discarded_packages / stop_indices[-1]), "%)")
 
         args = []
