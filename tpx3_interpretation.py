@@ -834,10 +834,10 @@ else:
     for index_list in tqdm(indices, desc="Chunk"):
         args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time])
 
-        print("Interpret data")
-        with Pool() as pool:
-            pix_data = list(tqdm(pool.imap(interpret_data, args), total=len(args), desc="Chunk"))
-        pix_data = np.concatenate(pix_data)
+    print("Interpret data")
+    with Pool(4) as pool:
+        pix_data = list(tqdm(pool.imap(interpret_data, args, 100), total=len(args), desc="Chunk"))
+    pix_data = np.concatenate(pix_data)
 
     print("Order data by timestamp")
     pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
