@@ -84,7 +84,9 @@ for j in range(2**14):
     _gray_14_lut[j] = gray_decrypt_v.tovalue()
 
 def interpret_data(args):
-    raw_data, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time = args
+    input_filename, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time = args
+    with tb.open_file(input_filename, 'r') as h5_file_in:
+        raw_data = h5_file_in.root.raw_data[raw_indices]
 
     # Based on the headers, filter for hit words and create a list of these words and a list of their indices
     hit_filter = np.where(np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) != 0b0101)
@@ -124,6 +126,8 @@ def interpret_data(args):
                 print(error)
                 print("Stop interpretation")
                 quit()
+    
+    raw_data = None
 
     # Split the hit word list up into lists of words for the individual chip links
     # First: create the filer for this
@@ -145,6 +149,7 @@ def interpret_data(args):
     link5_words = hits[link5_hits_filter]
     link6_words = hits[link6_hits_filter]
     link7_words = hits[link7_hits_filter]
+    hits = None
 
     # Third: Apply the filter also to the indices
     link0_words_indices = hits_indices[link0_hits_filter]
@@ -574,12 +579,15 @@ else:
         
         print("Correct data")
         
-        for i, chunk_indices in enumerate(tqdm(indices, desc="Chunk")):
+        i = 0
+        for chunk_indices in tqdm(indices, desc="Chunk"):
             # For chunks with errors do noting as they are anyway discarded
             if errors[i] != 0:
+                i += 1
                 continue
             # Ignore chunks without data
             if len(chunk_indices) == 0:
+                i += 1
                 continue
 
             # Based on the headers, filter for hit words and create a list of these words and a list of their indices
@@ -587,6 +595,7 @@ else:
             hit_filter = np.where(np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) != 0b0101)
             hits = current_raw_data[hit_filter]
             hits_indices = chunk_indices[hit_filter]
+            hit_filter = None
 
             # Only in "DataTake" the ToA extensions are active
             if scan_id == 'DataTake':
@@ -599,6 +608,9 @@ else:
                 # Split the lists in separate lists for word 0 and word 1 (based on header)
                 timestamps_0_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b01)[0]
                 timestamps_1_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b10)[0]
+                timestamps = None
+                timestamp_filter = None
+            current_raw_data = None
 
             # Split the hit word list up into lists of words for the individual chip links
             # First: create the filer for this
@@ -630,6 +642,8 @@ else:
             link5_words_indices = hits_indices[link5_hits_filter]
             link6_words_indices = hits_indices[link6_hits_filter]
             link7_words_indices = hits_indices[link7_hits_filter]
+            hits = None
+            hits_indices = None
 
             # Split the hit list for the links up into separate lists with word 0 and word 1
             # First: create the filter
@@ -705,34 +719,42 @@ else:
                 if np.abs(len(link0_words0_filter) - len(link0_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link1_words0_filter) - len(link1_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link2_words0_filter) - len(link2_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link3_words0_filter) - len(link3_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link4_words0_filter) - len(link4_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link5_words0_filter) - len(link5_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link6_words0_filter) - len(link6_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
                 if np.abs(len(link7_words0_filter) - len(link7_words1_filter)) > 1:
                     errors[i] += 1
                     chunks_after_errors = np.append(chunks_after_errors, i+1)
+                    i += 1
                     continue
 
             # If the chunk (per link) ends with a word 1 without fitting word 0 move the word 1 to the next chunk
@@ -797,17 +819,20 @@ else:
                 indices[i+1] = np.sort(indices[i+1])
 
             indices[i] = new_indices
+            i += 1
         
-        for i, chunk_errors in enumerate(errors):
+        j = 0
+        for chunk_errors in errors:
             if chunk_errors > 0:
-                discarded_packages += len(indices[i])
+                discarded_packages += len(indices[j])
+            j += 1
         indices = indices[np.where(errors == 0)[0]]
         print("Discarded packages", discarded_packages, "of", stop_indices[-1], "(", 100. * (discarded_packages / stop_indices[-1]), "%)")
 
-        args = []
-        print("Prepare interpretation")
-        for index_list in tqdm(indices, desc="Chunk"):
-            args.append([h5_file_in.root.raw_data[index_list], index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time])
+    args = []
+    print("Prepare interpretation")
+    for index_list in tqdm(indices, desc="Chunk"):
+        args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time])
 
         print("Interpret data")
         with Pool() as pool:
