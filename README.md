@@ -20,6 +20,12 @@ The script can be used with
 ```
 python3 tpx3_interpretation.py <path_to_raw_data.h5> <path_for_new_output.h5>
 ```
+or
+```
+python3 tpx3_interpretation.py <path_to_raw_data.h5> <path_for_new_output.h5> <timewalk_calib_a> <timewalk_calib_b> <timewalk_calib_c>
+```
+The parameters `timewalk_calib_a`, `timewalk_calib_b`, `timewalk_calib_c` are the fit parameters of the timewalk calibration. If no
+parameters are provided, no calibration will be done otherwise the calibration is performed.
 
 ## Output
 The script crates a new HDF5 file with the following content:

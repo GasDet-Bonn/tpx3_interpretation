@@ -83,8 +83,17 @@ for j in range(2**14):
         gray_decrypt_v[i]=gray_decrypt_v[i+1]^encoded_value[i]
     _gray_14_lut[j] = gray_decrypt_v.tovalue()
 
+def exp(x, a, b, c):
+    return np.exp(a*x + b) + c
+
+def timewalk_correction(tot, a, b, c):
+    timewalk = exp(tot, a, b, c)
+    toa_offset = (timewalk // 25).astype(int)
+    ftoa_offset = (np.round(np.mod(timewalk, 25) / 1.5625)).astype(int)
+    return toa_offset, ftoa_offset
+
 def interpret_data(args):
-    input_filename, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time = args
+    input_filename, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time, timewalk_calib, timewalk_a, timewalk_b, timewalk_c = args
     with tb.open_file(input_filename, 'r') as h5_file_in:
         raw_data = h5_file_in.root.raw_data[raw_indices]
 
@@ -401,7 +410,7 @@ def interpret_data(args):
     # Combine the link specific lists dor hits and their indices
     data = np.concatenate((link0_hits, link1_hits, link2_hits, link3_hits, link4_hits, link5_hits, link6_hits, link7_hits))
     data_indices = np.concatenate((link0_hits_indices, link1_hits_indices, link2_hits_indices, link3_hits_indices, link4_hits_indices, link5_hits_indices, link6_hits_indices, link7_hits_indices))
-    
+
     # Sort by the indices
     data_sort = np.argsort(data_indices)
 
@@ -425,7 +434,7 @@ def interpret_data(args):
 
     # Create a recarray for the hit data
     data_type = {'names': ['data_header', 'header', 'hit_index', 'x',     'y',     'TOA',    'TOT',    'EventCounter', 'HitCounter', 'FTOA',  'scan_param_id', 'chunk_start_time', 'iTOT',   'TOA_Extension', 'TOA_Combined'],
-            'formats': ['uint8',       'uint8',  'uint64', 'uint8', 'uint8', 'uint16', 'uint16', 'uint16',       'uint8',      'uint8', 'uint16',        'float',            'uint16', 'uint64',        'uint64']}
+                'formats': ['uint8',       'uint8',  'uint64', 'uint8', 'uint8', 'uint16', 'uint16', 'uint16',       'uint8',      'uint8', 'uint16',        'float',            'uint16', 'uint64',        'uint64']}
     pix_data = np.recarray((data.shape[0]), dtype=data_type)
 
     # Create some numpy numbers for the data interpretation
@@ -500,6 +509,36 @@ def interpret_data(args):
             pix_data['TOA_Extension'] = np.zeros(len(data))
             pix_data['TOA_Combined'] = np.zeros(len(data))
 
+    # Only in the combined ToA/ToT mode there is ToT data as input for the
+    # timewalk correction and ToA data to correct
+    if timewalk_calib == True and op_mode == 0b00:
+        timewalk_toa, timewalk_ftoa = timewalk_correction(pix_data['TOT'], timewalk_a, timewalk_b, timewalk_c)
+        toa_offsets = timewalk_toa
+        if vco == True:
+            column_offset = (((pix_data['x']) // 2) % 16)
+            underflow_ftoa = column_offset + timewalk_ftoa > pix_data['FTOA']
+            pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
+            toa_offsets += np.where(underflow_ftoa, 1, 0)
+            underflow_ftoa = column_offset + timewalk_ftoa > pix_data['FTOA']
+            pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
+            toa_offsets += np.where(underflow_ftoa, 1, 0)
+            pix_data['FTOA'] = pix_data['FTOA'] - (column_offset + timewalk_ftoa)
+        underflow_toa = pix_data['TOA'] - toa_offsets > 16384
+        pix_data['TOA'] = np.where(underflow_toa, pix_data['TOA'] + 16384, pix_data['TOA'])
+        pix_data['TOA'] = pix_data['TOA'] - toa_offsets
+        pix_data['TOA_Combined'] = pix_data['TOA_Combined'] - toa_offsets
+    # In the only ToA mode with active VCO still the column clock offset can be corrected
+    elif op_mode == 0b01 and vco == True:
+        column_offset = (((pix_data['x']) // 2) % 16)
+        underflow_ftoa = column_offset > pix_data['FTOA']
+        pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
+        toa_offsets += np.where(underflow_ftoa, 1, 0)
+        pix_data['FTOA'] = pix_data['FTOA'] - column_offset
+        underflow_toa = pix_data['TOA'] - toa_offsets > 16384
+        pix_data['TOA'] = np.where(underflow_toa, pix_data['TOA'] + 16384, pix_data['TOA'])
+        pix_data['TOA'] = pix_data['TOA'] - toa_offsets
+        pix_data['TOA_Combined'] = pix_data['TOA_Combined'] - toa_offsets
+
     #print("Order data by timestamp")
     pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
 
@@ -536,12 +575,19 @@ def save_data(h5_filename_in, h5_filename_out, pix_data):
         with tb.open_file(h5_filename_in, 'r+') as h5_file_in:
             h5_file_in.copy_children(h5_file_in.root.configuration, h5_file_out.root.interpreted.run_0.configuration)
 
-if len(sys.argv) != 3:
-    print("Please enter the data paths of the input and the output file (python tpx3_interpretation.py <input path> <output path>)")
-
-else:
+if len(sys.argv) == 3 or len(sys.argv) == 6:
     input_filename = sys.argv[1]
     output_filename = sys.argv[2]
+    if len(sys.argv) == 6:
+        timewalk_a = float(sys.argv[3])
+        timewalk_b = float(sys.argv[4])
+        timewalk_c = float(sys.argv[5])
+        timewalk_calib = True
+    else:
+        timewalk_a = 1
+        timewalk_b = 1
+        timewalk_c = 1
+        timewalk_calib = False
     if not input_filename.endswith('.h5'):
         print("Please choose a valid input file")
     if not output_filename.endswith('.h5'):
@@ -832,7 +878,7 @@ else:
     args = []
     print("Prepare interpretation")
     for index_list in tqdm(indices, desc="Chunk"):
-        args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time])
+        args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time, timewalk_calib, timewalk_a, timewalk_b, timewalk_c])
 
     print("Interpret data")
     with Pool(4) as pool:
@@ -842,3 +888,6 @@ else:
     print("Order data by timestamp")
     pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
     save_data(input_filename, output_filename, pix_data)
+
+else:
+    print("Please enter the data paths of the input and the output file (python tpx3_interpretation.py <input path> <output path>)")
