@@ -2,7 +2,7 @@ from tqdm import tqdm
 import numpy as np
 import tables as tb
 import sys
-from multiprocessing import Pool
+import multiprocessing
 
 from basil.utils.BitLogic import BitLogic
 
@@ -888,7 +888,8 @@ if len(sys.argv) == 3 or len(sys.argv) == 6:
                 if len(args) == 0:
                     start = stop
                     continue
-                with Pool(4) as pool:
+                num_threads = multiprocessing.cpu_count()
+                with multiprocessing.Pool(num_threads-1) as pool:
                     pix_data = list(tqdm(pool.imap(interpret_data, args, 100), total=len(args), desc="Chunk"))
                 pix_data = np.concatenate(pix_data)
 
@@ -909,7 +910,8 @@ if len(sys.argv) == 3 or len(sys.argv) == 6:
                 args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time, start_indices, timewalk_calib, timewalk_a, timewalk_b, timewalk_c])
 
             print("Interpret data")
-            with Pool(4) as pool:
+            num_threads = multiprocessing.cpu_count()
+            with multiprocessing.Pool(num_threads-1) as pool:
                 pix_data = list(tqdm(pool.imap(interpret_data, args, 100), total=len(args), desc="Chunk"))
             pix_data = np.concatenate(pix_data)
 
