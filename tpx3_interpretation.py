@@ -93,487 +93,736 @@ def timewalk_correction(tot, a, b, c):
     return toa_offset, ftoa_offset
 
 def interpret_data(args):
-    input_filename, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time, timewalk_calib, timewalk_a, timewalk_b, timewalk_c = args
-    with tb.open_file(input_filename, 'r') as h5_file_in:
-        raw_data = h5_file_in.root.raw_data[raw_indices]
+    try:
+        input_filename, raw_indices, op_mode, vco, scan_id, scan_param_id, chunk_start_time, start_indices, timewalk_calib, timewalk_a, timewalk_b, timewalk_c = args
+        with tb.open_file(input_filename, 'r') as h5_file_in:
+            raw_data = h5_file_in.root.raw_data[raw_indices]
 
-    # Based on the headers, filter for hit words and create a list of these words and a list of their indices
-    hit_filter = np.where(np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) != 0b0101)
-    hits = raw_data[hit_filter]
-    hits_indices = raw_indices[hit_filter]
+        # Based on the headers, filter for hit words and create a list of these words and a list of their indices
+        hit_filter = np.where(np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) != 0b0101)
+        hits = raw_data[hit_filter]
+        hits_indices = raw_indices[hit_filter]
 
-    # Only in "DataTake" the ToA extensions are active
-    if scan_id == 'DataTake':
-        # Based on the headers, filter for ToA extension words and create a list of these words and a list of their indices
-        timestamp_map = np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) == 0b0101
-        timestamp_filter = np.where(timestamp_map == True)
-        timestamps = raw_data[timestamp_filter]
-        timestamps_indices = raw_indices[timestamp_filter]
+        # Only in "DataTake" the ToA extensions are active
+        if scan_id == 'DataTake':
+            # Based on the headers, filter for ToA extension words and create a list of these words and a list of their indices
+            timestamp_map = np.right_shift(np.bitwise_and(raw_data, 0xf0000000), 28) == 0b0101
+            timestamp_filter = np.where(timestamp_map == True)
+            timestamps = raw_data[timestamp_filter]
+            timestamps_indices = raw_indices[timestamp_filter]
 
-        # Split the lists in separate lists for word 0 and word 1 (based on header)
-        timestamps_0_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b01)
-        timestamps_1_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b10)
-        timestamps_0 = timestamps[timestamps_0_filter].astype(np.uint64)
-        timestamps_1 = timestamps[timestamps_1_filter].astype(np.uint64)
-        timestamps_0_indices = timestamps_indices[timestamps_0_filter]
-        timestamps_1_indices = timestamps_indices[timestamps_1_filter]
+            # Split the lists in separate lists for word 0 and word 1 (based on header)
+            timestamps_0_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b01)
+            timestamps_1_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b10)
+            timestamps_0 = timestamps[timestamps_0_filter].astype(np.uint64)
+            timestamps_1 = timestamps[timestamps_1_filter].astype(np.uint64)
+            timestamps_0_indices = timestamps_indices[timestamps_0_filter]
+            timestamps_1_indices = timestamps_indices[timestamps_1_filter]
 
-        # Combine the timestamp bits of word 0 and word 1 to the full 48-bit ToA extension
-        if len(timestamps_1) == len(timestamps_0):
-            full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
-            full_timestamps_indices = timestamps_0_indices
-        elif len(timestamps_1) + 1 == len(timestamps_0):
-            full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0[:-1], 0xfff000)
-            full_timestamps_indices = timestamps_0_indices[:-1]
-        elif len(timestamps_1) == len(timestamps_0) + 1:
-            full_timestamps = np.left_shift(np.bitwise_and(timestamps_1[:-1], 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
-            full_timestamps_indices = timestamps_0_indices
-        else:
-            try:
+            # Combine the timestamp bits of word 0 and word 1 to the full 48-bit ToA extension
+            if len(timestamps_1) == len(timestamps_0):
+                full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
+                full_timestamps_indices = timestamps_0_indices
+            elif len(timestamps_1) + 1 == len(timestamps_0):
+                full_timestamps = np.left_shift(np.bitwise_and(timestamps_1, 0xffffff), 24) + np.bitwise_and(timestamps_0[:-1], 0xfff000)
+                full_timestamps_indices = timestamps_0_indices[:-1]
+            elif len(timestamps_1) == len(timestamps_0) + 1:
+                full_timestamps = np.left_shift(np.bitwise_and(timestamps_1[:-1], 0xffffff), 24) + np.bitwise_and(timestamps_0, 0xfff000)
+                full_timestamps_indices = timestamps_0_indices
+            else:
                 raise AssignmentError("Words for timestamps do not match - assignment not possible")
-            except AssignmentError as error:
-                print(error)
-                print("Stop interpretation")
-                quit()
-    
-    raw_data = None
 
-    # Split the hit word list up into lists of words for the individual chip links
-    # First: create the filer for this
-    link0_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000000)
-    link1_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000010)
-    link2_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000100)
-    link3_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000110)
-    link4_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001000)
-    link5_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001010)
-    link6_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001100)
-    link7_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001110)
+        raw_data = None
 
-    # Second: Filter the words
-    link0_words = hits[link0_hits_filter]
-    link1_words = hits[link1_hits_filter]
-    link2_words = hits[link2_hits_filter]
-    link3_words = hits[link3_hits_filter]
-    link4_words = hits[link4_hits_filter]
-    link5_words = hits[link5_hits_filter]
-    link6_words = hits[link6_hits_filter]
-    link7_words = hits[link7_hits_filter]
-    hits = None
+        # Split the hit word list up into lists of words for the individual chip links
+        # First: create the filer for this
+        link0_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000000)
+        link1_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000010)
+        link2_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000100)
+        link3_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000110)
+        link4_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001000)
+        link5_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001010)
+        link6_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001100)
+        link7_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001110)
 
-    # Third: Apply the filter also to the indices
-    link0_words_indices = hits_indices[link0_hits_filter]
-    link1_words_indices = hits_indices[link1_hits_filter]
-    link2_words_indices = hits_indices[link2_hits_filter]
-    link3_words_indices = hits_indices[link3_hits_filter]
-    link4_words_indices = hits_indices[link4_hits_filter]
-    link5_words_indices = hits_indices[link5_hits_filter]
-    link6_words_indices = hits_indices[link6_hits_filter]
-    link7_words_indices = hits_indices[link7_hits_filter]
+        # Second: Filter the words
+        link0_words = hits[link0_hits_filter]
+        link1_words = hits[link1_hits_filter]
+        link2_words = hits[link2_hits_filter]
+        link3_words = hits[link3_hits_filter]
+        link4_words = hits[link4_hits_filter]
+        link5_words = hits[link5_hits_filter]
+        link6_words = hits[link6_hits_filter]
+        link7_words = hits[link7_hits_filter]
+        hits = None
 
-    # Split the hit list for the links up into separate lists with word 0 and word 1
-    # First: create the filter
-    link0_words0_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b0)
-    link0_words1_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b1)
-    link1_words0_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b0)
-    link1_words1_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b1)
-    link2_words0_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b0)
-    link2_words1_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b1)
-    link3_words0_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b0)
-    link3_words1_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b1)
-    link4_words0_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b0)
-    link4_words1_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b1)
-    link5_words0_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b0)
-    link5_words1_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b1)
-    link6_words0_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b0)
-    link6_words1_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b1)
-    link7_words0_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b0)
-    link7_words1_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b1)
+        # Third: Apply the filter also to the indices
+        link0_words_indices = hits_indices[link0_hits_filter]
+        link1_words_indices = hits_indices[link1_hits_filter]
+        link2_words_indices = hits_indices[link2_hits_filter]
+        link3_words_indices = hits_indices[link3_hits_filter]
+        link4_words_indices = hits_indices[link4_hits_filter]
+        link5_words_indices = hits_indices[link5_hits_filter]
+        link6_words_indices = hits_indices[link6_hits_filter]
+        link7_words_indices = hits_indices[link7_hits_filter]
 
-    # Second: Create the new lists and remove the headers
-    link0_words0 = np.right_shift(np.bitwise_and(link0_words[link0_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link0_words1 = np.right_shift(np.bitwise_and(link0_words[link0_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link1_words0 = np.right_shift(np.bitwise_and(link1_words[link1_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link1_words1 = np.right_shift(np.bitwise_and(link1_words[link1_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link2_words0 = np.right_shift(np.bitwise_and(link2_words[link2_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link2_words1 = np.right_shift(np.bitwise_and(link2_words[link2_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link3_words0 = np.right_shift(np.bitwise_and(link3_words[link3_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link3_words1 = np.right_shift(np.bitwise_and(link3_words[link3_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link4_words0 = np.right_shift(np.bitwise_and(link4_words[link4_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link4_words1 = np.right_shift(np.bitwise_and(link4_words[link4_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link5_words0 = np.right_shift(np.bitwise_and(link5_words[link5_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link5_words1 = np.right_shift(np.bitwise_and(link5_words[link5_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link6_words0 = np.right_shift(np.bitwise_and(link6_words[link6_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link6_words1 = np.right_shift(np.bitwise_and(link6_words[link6_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link7_words0 = np.right_shift(np.bitwise_and(link7_words[link7_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
-    link7_words1 = np.right_shift(np.bitwise_and(link7_words[link7_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        # Split the hit list for the links up into separate lists with word 0 and word 1
+        # First: create the filter
+        link0_words0_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b0)
+        link0_words1_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b1)
+        link1_words0_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b0)
+        link1_words1_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b1)
+        link2_words0_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b0)
+        link2_words1_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b1)
+        link3_words0_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b0)
+        link3_words1_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b1)
+        link4_words0_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b0)
+        link4_words1_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b1)
+        link5_words0_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b0)
+        link5_words1_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b1)
+        link6_words0_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b0)
+        link6_words1_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b1)
+        link7_words0_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b0)
+        link7_words1_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b1)
 
-    # Third: Combine word 0 and word 1 to the full 48-bit hit word
-    # Fourth: Apply the filter to the indices - Use the index of word 0 als index for the full hit
-    if len(link0_words0) == len(link0_words1):
-        link0_hits = np.left_shift(link0_words0, 24) + link0_words1
-        link0_hits_indices = link0_words_indices[link0_words0_filter]
-    elif len(link0_words0) + 1 == len(link0_words1):
-        link0_hits = np.left_shift(link0_words0, 24) + link0_words1[:-1]
-        link0_hits_indices = link0_words_indices[link0_words0_filter]
-    elif len(link0_words0) == len(link0_words1) + 1:
-        link0_hits = np.left_shift(link0_words0[:-1], 24) + link0_words1
-        link0_hits_indices = link0_words_indices[link0_words0_filter[:-1]]
-    else:
-        try:
+        # Second: Create the new lists and remove the headers
+        link0_words0 = np.right_shift(np.bitwise_and(link0_words[link0_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link0_words1 = np.right_shift(np.bitwise_and(link0_words[link0_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link1_words0 = np.right_shift(np.bitwise_and(link1_words[link1_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link1_words1 = np.right_shift(np.bitwise_and(link1_words[link1_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link2_words0 = np.right_shift(np.bitwise_and(link2_words[link2_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link2_words1 = np.right_shift(np.bitwise_and(link2_words[link2_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link3_words0 = np.right_shift(np.bitwise_and(link3_words[link3_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link3_words1 = np.right_shift(np.bitwise_and(link3_words[link3_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link4_words0 = np.right_shift(np.bitwise_and(link4_words[link4_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link4_words1 = np.right_shift(np.bitwise_and(link4_words[link4_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link5_words0 = np.right_shift(np.bitwise_and(link5_words[link5_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link5_words1 = np.right_shift(np.bitwise_and(link5_words[link5_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link6_words0 = np.right_shift(np.bitwise_and(link6_words[link6_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link6_words1 = np.right_shift(np.bitwise_and(link6_words[link6_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link7_words0 = np.right_shift(np.bitwise_and(link7_words[link7_words0_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+        link7_words1 = np.right_shift(np.bitwise_and(link7_words[link7_words1_filter], 0xffffff).view('>u4'), 8).astype(np.uint64)
+
+        # Third: Combine word 0 and word 1 to the full 48-bit hit word
+        # Fourth: Apply the filter to the indices - Use the index of word 0 als index for the full hit
+        if len(link0_words0) == len(link0_words1):
+            link0_hits = np.left_shift(link0_words0, 24) + link0_words1
+            link0_hits_indices = link0_words_indices[link0_words0_filter]
+        elif len(link0_words0) + 1 == len(link0_words1):
+            link0_hits = np.left_shift(link0_words0, 24) + link0_words1[:-1]
+            link0_hits_indices = link0_words_indices[link0_words0_filter]
+        elif len(link0_words0) == len(link0_words1) + 1:
+            link0_hits = np.left_shift(link0_words0[:-1], 24) + link0_words1
+            link0_hits_indices = link0_words_indices[link0_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 0 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link1_words0) == len(link1_words1):
-        link1_hits = np.left_shift(link1_words0, 24) + link1_words1
-        link1_hits_indices = link1_words_indices[link1_words0_filter]
-    elif len(link1_words0) + 1 == len(link1_words1):
-        link1_hits = np.left_shift(link1_words0, 24) + link1_words1[:-1]
-        link1_hits_indices = link1_words_indices[link1_words0_filter]
-    elif len(link1_words0) == len(link1_words1) + 1:
-        link1_hits = np.left_shift(link1_words0[:-1], 24) + link1_words1
-        link1_hits_indices = link1_words_indices[link1_words0_filter[:-1]]
-    else:
-        try:
+        if len(link1_words0) == len(link1_words1):
+            link1_hits = np.left_shift(link1_words0, 24) + link1_words1
+            link1_hits_indices = link1_words_indices[link1_words0_filter]
+        elif len(link1_words0) + 1 == len(link1_words1):
+            link1_hits = np.left_shift(link1_words0, 24) + link1_words1[:-1]
+            link1_hits_indices = link1_words_indices[link1_words0_filter]
+        elif len(link1_words0) == len(link1_words1) + 1:
+            link1_hits = np.left_shift(link1_words0[:-1], 24) + link1_words1
+            link1_hits_indices = link1_words_indices[link1_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 1 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link2_words0) == len(link2_words1):
-        link2_hits = np.left_shift(link2_words0, 24) + link2_words1
-        link2_hits_indices = link2_words_indices[link2_words0_filter]
-    elif len(link2_words0) + 1 == len(link2_words1):
-        link2_hits = np.left_shift(link2_words0, 24) + link2_words1[:-1]
-        link2_hits_indices = link2_words_indices[link2_words0_filter]
-    elif len(link2_words0) == len(link2_words1) + 1:
-        link2_hits = np.left_shift(link2_words0[:-1], 24) + link2_words1
-        link2_hits_indices = link2_words_indices[link2_words0_filter[:-1]]
-    else:
-        try:
+        if len(link2_words0) == len(link2_words1):
+            link2_hits = np.left_shift(link2_words0, 24) + link2_words1
+            link2_hits_indices = link2_words_indices[link2_words0_filter]
+        elif len(link2_words0) + 1 == len(link2_words1):
+            link2_hits = np.left_shift(link2_words0, 24) + link2_words1[:-1]
+            link2_hits_indices = link2_words_indices[link2_words0_filter]
+        elif len(link2_words0) == len(link2_words1) + 1:
+            link2_hits = np.left_shift(link2_words0[:-1], 24) + link2_words1
+            link2_hits_indices = link2_words_indices[link2_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 2 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link3_words0) == len(link3_words1):
-        link3_hits = np.left_shift(link3_words0, 24) + link3_words1
-        link3_hits_indices = link3_words_indices[link3_words0_filter]
-    elif len(link3_words0) + 1 == len(link3_words1):
-        link3_hits = np.left_shift(link3_words0, 24) + link3_words1[:-1]
-        link3_hits_indices = link3_words_indices[link3_words0_filter]
-    elif len(link3_words0) == len(link3_words1) + 1:
-        link3_hits = np.left_shift(link3_words0[:-1], 24) + link3_words1
-        link3_hits_indices = link3_words_indices[link3_words0_filter[:-1]]
-    else:
-        try:
+        if len(link3_words0) == len(link3_words1):
+            link3_hits = np.left_shift(link3_words0, 24) + link3_words1
+            link3_hits_indices = link3_words_indices[link3_words0_filter]
+        elif len(link3_words0) + 1 == len(link3_words1):
+            link3_hits = np.left_shift(link3_words0, 24) + link3_words1[:-1]
+            link3_hits_indices = link3_words_indices[link3_words0_filter]
+        elif len(link3_words0) == len(link3_words1) + 1:
+            link3_hits = np.left_shift(link3_words0[:-1], 24) + link3_words1
+            link3_hits_indices = link3_words_indices[link3_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 3 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link4_words0) == len(link4_words1):
-        link4_hits = np.left_shift(link4_words0, 24) + link4_words1
-        link4_hits_indices = link4_words_indices[link4_words0_filter]
-    elif len(link4_words0) + 1 == len(link4_words1):
-        link4_hits = np.left_shift(link4_words0, 24) + link4_words1[:-1]
-        link4_hits_indices = link4_words_indices[link4_words0_filter]
-    elif len(link4_words0) == len(link4_words1) + 1:
-        link4_hits = np.left_shift(link4_words0[:-1], 24) + link4_words1
-        link4_hits_indices = link4_words_indices[link4_words0_filter[:-1]]
-    else:
-        try:
+        if len(link4_words0) == len(link4_words1):
+            link4_hits = np.left_shift(link4_words0, 24) + link4_words1
+            link4_hits_indices = link4_words_indices[link4_words0_filter]
+        elif len(link4_words0) + 1 == len(link4_words1):
+            link4_hits = np.left_shift(link4_words0, 24) + link4_words1[:-1]
+            link4_hits_indices = link4_words_indices[link4_words0_filter]
+        elif len(link4_words0) == len(link4_words1) + 1:
+            link4_hits = np.left_shift(link4_words0[:-1], 24) + link4_words1
+            link4_hits_indices = link4_words_indices[link4_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 4 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link5_words0) == len(link5_words1):
-        link5_hits = np.left_shift(link5_words0, 24) + link5_words1
-        link5_hits_indices = link5_words_indices[link5_words0_filter]
-    elif len(link5_words0) + 1 == len(link5_words1):
-        link5_hits = np.left_shift(link5_words0, 24) + link5_words1[:-1]
-        link5_hits_indices = link5_words_indices[link5_words0_filter]
-    elif len(link5_words0) == len(link5_words1) + 1:
-        link5_hits = np.left_shift(link5_words0[:-1], 24) + link5_words1
-        link5_hits_indices = link5_words_indices[link5_words0_filter[:-1]]
-    else:
-        try:
+        if len(link5_words0) == len(link5_words1):
+            link5_hits = np.left_shift(link5_words0, 24) + link5_words1
+            link5_hits_indices = link5_words_indices[link5_words0_filter]
+        elif len(link5_words0) + 1 == len(link5_words1):
+            link5_hits = np.left_shift(link5_words0, 24) + link5_words1[:-1]
+            link5_hits_indices = link5_words_indices[link5_words0_filter]
+        elif len(link5_words0) == len(link5_words1) + 1:
+            link5_hits = np.left_shift(link5_words0[:-1], 24) + link5_words1
+            link5_hits_indices = link5_words_indices[link5_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 5 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link6_words0) == len(link6_words1):
-        link6_hits = np.left_shift(link6_words0, 24) + link6_words1
-        link6_hits_indices = link6_words_indices[link6_words0_filter]
-    elif len(link6_words0) + 1 == len(link6_words1):
-        link6_hits = np.left_shift(link6_words0, 24) + link6_words1[:-1]
-        link6_hits_indices = link6_words_indices[link6_words0_filter]
-    elif len(link6_words0) == len(link6_words1) + 1:
-        link6_hits = np.left_shift(link6_words0[:-1], 24) + link6_words1
-        link6_hits_indices = link6_words_indices[link6_words0_filter[:-1]]
-    else:
-        try:
+        if len(link6_words0) == len(link6_words1):
+            link6_hits = np.left_shift(link6_words0, 24) + link6_words1
+            link6_hits_indices = link6_words_indices[link6_words0_filter]
+        elif len(link6_words0) + 1 == len(link6_words1):
+            link6_hits = np.left_shift(link6_words0, 24) + link6_words1[:-1]
+            link6_hits_indices = link6_words_indices[link6_words0_filter]
+        elif len(link6_words0) == len(link6_words1) + 1:
+            link6_hits = np.left_shift(link6_words0[:-1], 24) + link6_words1
+            link6_hits_indices = link6_words_indices[link6_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 6 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    if len(link7_words0) == len(link7_words1):
-        link7_hits = np.left_shift(link7_words0, 24) + link7_words1
-        link7_hits_indices = link7_words_indices[link7_words0_filter]
-    elif len(link7_words0) + 1 == len(link7_words1):
-        link7_hits = np.left_shift(link7_words0, 24) + link7_words1[:-1]
-        link7_hits_indices = link7_words_indices[link7_words0_filter]
-    elif len(link7_words0) == len(link7_words1) + 1:
-        link7_hits = np.left_shift(link7_words0[:-1], 24) + link7_words1
-        link7_hits_indices = link7_words_indices[link7_words0_filter[:-1]]
-    else:
-        try:
+        if len(link7_words0) == len(link7_words1):
+            link7_hits = np.left_shift(link7_words0, 24) + link7_words1
+            link7_hits_indices = link7_words_indices[link7_words0_filter]
+        elif len(link7_words0) + 1 == len(link7_words1):
+            link7_hits = np.left_shift(link7_words0, 24) + link7_words1[:-1]
+            link7_hits_indices = link7_words_indices[link7_words0_filter]
+        elif len(link7_words0) == len(link7_words1) + 1:
+            link7_hits = np.left_shift(link7_words0[:-1], 24) + link7_words1
+            link7_hits_indices = link7_words_indices[link7_words0_filter[:-1]]
+        else:
             raise AssignmentError("Words on link 7 do not match - assignment not possible")
-        except AssignmentError as error:
-            print(error)
-            print("Stop interpretation")
-            quit()
 
-    # When there are ToA extensions combine them with the hits
-    if scan_id == 'DataTake':
-        # Based on the indices of hits and ToA extensions combine them: Each hit should get the 
-        # extensions with the next lowest index
-        link0_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link0_hits_indices)
-        link1_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link1_hits_indices)
-        link2_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link2_hits_indices)
-        link3_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link3_hits_indices)
-        link4_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link4_hits_indices)
-        link5_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link5_hits_indices)
-        link6_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link6_hits_indices)
-        link7_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link7_hits_indices)
-
-        link0_hits_extensions_indices = np.maximum(link0_hits_extensions_indices - 1, 0)
-        link1_hits_extensions_indices = np.maximum(link1_hits_extensions_indices - 1, 0)
-        link2_hits_extensions_indices = np.maximum(link2_hits_extensions_indices - 1, 0)
-        link3_hits_extensions_indices = np.maximum(link3_hits_extensions_indices - 1, 0)
-        link4_hits_extensions_indices = np.maximum(link4_hits_extensions_indices - 1, 0)
-        link5_hits_extensions_indices = np.maximum(link5_hits_extensions_indices - 1, 0)
-        link6_hits_extensions_indices = np.maximum(link6_hits_extensions_indices - 1, 0)
-        link7_hits_extensions_indices = np.maximum(link7_hits_extensions_indices - 1, 0)
-
-        link0_hits_extensions = full_timestamps[link0_hits_extensions_indices]
-        link1_hits_extensions = full_timestamps[link1_hits_extensions_indices]
-        link2_hits_extensions = full_timestamps[link2_hits_extensions_indices]
-        link3_hits_extensions = full_timestamps[link3_hits_extensions_indices]
-        link4_hits_extensions = full_timestamps[link4_hits_extensions_indices]
-        link5_hits_extensions = full_timestamps[link5_hits_extensions_indices]
-        link6_hits_extensions = full_timestamps[link6_hits_extensions_indices]
-        link7_hits_extensions = full_timestamps[link7_hits_extensions_indices]
-
-        # Check if bit 12 and 13 of the ToA and the ToA extension are equal (they should be based on the firmware setting of the extension)
-        # For hits which dont fulfill this condition store their indices into a list, so that they can be corrected
-        link0_extension_offsets = np.where(np.bitwise_and(link0_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link0_hits, 14), 0x3fff)], 0x3000))[0]
-        link1_extension_offsets = np.where(np.bitwise_and(link1_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link1_hits, 14), 0x3fff)], 0x3000))[0]
-        link2_extension_offsets = np.where(np.bitwise_and(link2_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link2_hits, 14), 0x3fff)], 0x3000))[0]
-        link3_extension_offsets = np.where(np.bitwise_and(link3_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link3_hits, 14), 0x3fff)], 0x3000))[0]
-        link4_extension_offsets = np.where(np.bitwise_and(link4_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link4_hits, 14), 0x3fff)], 0x3000))[0]
-        link5_extension_offsets = np.where(np.bitwise_and(link5_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link5_hits, 14), 0x3fff)], 0x3000))[0]
-        link6_extension_offsets = np.where(np.bitwise_and(link6_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link6_hits, 14), 0x3fff)], 0x3000))[0]
-        link7_extension_offsets = np.where(np.bitwise_and(link7_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link7_hits, 14), 0x3fff)], 0x3000))[0]
-
-        # Shift the extension index for hits that dont fulfill the condition by -1
-        link0_hits_extensions[link0_extension_offsets] -= 1
-        link1_hits_extensions[link1_extension_offsets] -= 1
-        link2_hits_extensions[link2_extension_offsets] -= 1
-        link3_hits_extensions[link3_extension_offsets] -= 1
-        link4_hits_extensions[link4_extension_offsets] -= 1
-        link5_hits_extensions[link5_extension_offsets] -= 1
-        link6_hits_extensions[link6_extension_offsets] -= 1
-        link7_hits_extensions[link7_extension_offsets] -= 1
-
-        # Check again the overlap of the two bits after the correction
-        link0_extension_offsets = np.where(np.bitwise_and(link0_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link0_hits, 14), 0x3fff)], 0x3000))[0]
-        link1_extension_offsets = np.where(np.bitwise_and(link1_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link1_hits, 14), 0x3fff)], 0x3000))[0]
-        link2_extension_offsets = np.where(np.bitwise_and(link2_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link2_hits, 14), 0x3fff)], 0x3000))[0]
-        link3_extension_offsets = np.where(np.bitwise_and(link3_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link3_hits, 14), 0x3fff)], 0x3000))[0]
-        link4_extension_offsets = np.where(np.bitwise_and(link4_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link4_hits, 14), 0x3fff)], 0x3000))[0]
-        link5_extension_offsets = np.where(np.bitwise_and(link5_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link5_hits, 14), 0x3fff)], 0x3000))[0]
-        link6_extension_offsets = np.where(np.bitwise_and(link6_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link6_hits, 14), 0x3fff)], 0x3000))[0]
-        link7_extension_offsets = np.where(np.bitwise_and(link7_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link7_hits, 14), 0x3fff)], 0x3000))[0]
-
-    # Combine the link specific lists dor hits and their indices
-    data = np.concatenate((link0_hits, link1_hits, link2_hits, link3_hits, link4_hits, link5_hits, link6_hits, link7_hits))
-    data_indices = np.concatenate((link0_hits_indices, link1_hits_indices, link2_hits_indices, link3_hits_indices, link4_hits_indices, link5_hits_indices, link6_hits_indices, link7_hits_indices))
-
-    # Sort by the indices
-    data_sort = np.argsort(data_indices)
-
-    # Apply the new order based on the indices to get the original order of hits
-    data = data[data_sort]
-    data_indices = data_indices[data_sort]
-
-    # If there are ToA extensions, combine also the link specific lists and apply the ordering
-    if scan_id == 'DataTake':
-        extensions = np.concatenate((link0_hits_extensions, link1_hits_extensions, link2_hits_extensions, link3_hits_extensions, link4_hits_extensions, link5_hits_extensions, link6_hits_extensions, link7_hits_extensions))
-        extensions = extensions[data_sort]
-
-    # Create a list of chunk indices with the length of the hit list, so that for each hit chunk specific information can be added
-    chunk_indices = np.searchsorted(start_indices, data_indices, side='right')
-    chunk_indices = np.maximum(chunk_indices - 1, 0)
-
-    # Create lists of the scan pararmeter ids and chunk start times for all hits based on the chunk indices
-    data_scan_param_ids = scan_param_id[chunk_indices]
-    data_chunk_start_time = chunk_start_time[chunk_indices]
-    #data_start_indices = start_indices[chunk_indices]
-
-    # Create a recarray for the hit data
-    data_type = {'names': ['data_header', 'header', 'hit_index', 'x',     'y',     'TOA',    'TOT',    'EventCounter', 'HitCounter', 'FTOA',  'scan_param_id', 'chunk_start_time', 'iTOT',   'TOA_Extension', 'TOA_Combined'],
-                'formats': ['uint8',       'uint8',  'uint64', 'uint8', 'uint8', 'uint16', 'uint16', 'uint16',       'uint8',      'uint8', 'uint16',        'float',            'uint16', 'uint64',        'uint64']}
-    pix_data = np.recarray((data.shape[0]), dtype=data_type)
-
-    # Create some numpy numbers for the data interpretation
-    n47 = np.uint64(47)
-    n44 = np.uint64(44)
-    n28 = np.uint64(28)
-    n14 = np.uint(14)
-    n4 = np.uint64(4)
-    n3ff = np.uint64(0x3ff)
-    n3fff = np.uint64(0x3fff)
-    nf = np.uint64(0xf)
-
-    # Get the x and y coordinates of the hits based on the 3 Timepix3 coordinates (pixel, super_pixel and eoc)
-    pixel = (data >> n28) & np.uint64(0b111)
-    super_pixel = (data >> np.uint64(28 + 3)) & np.uint64(0x3f)
-    right_col = pixel > 3
-    eoc = (data >> np.uint64(28 + 9)) & np.uint64(0x7f)
-    pix_data['y'] = (super_pixel * 4) + (pixel - right_col * 4)
-    pix_data['x'] = eoc * 2 + right_col * 1
-
-    # Put the headers into the recarray
-    pix_data['data_header'] = data >> n47
-    pix_data['header'] = data >> n44
-
-    # Add chunk based information to the hits into the recarray
-    pix_data['scan_param_id'] = data_scan_param_ids
-    pix_data['chunk_start_time'] = data_chunk_start_time
-
-    # Write the original indices of word 0 per hit into the recarray
-    pix_data['hit_index'] = data_indices
-
-    # Write HitCounter and FTOA based on the run config ()
-    if(vco == False):
-        pix_data['HitCounter'] = _lfsr_4_lut[data & nf]
-        pix_data['FTOA'] = np.zeros(len(data))
-    else:
-        pix_data['HitCounter'] = np.zeros(len(data))
-        pix_data['FTOA'] = data & nf
-
-    # Based on the run mode write iToT, ToT, ToA, EventCounter, ToA_Extension and ToA_combined
-    if op_mode == 0b00:
-        pix_data['iTOT'] = np.zeros(len(data))
-        pix_data['TOT'] = _lfsr_10_lut[(data >> n4) & n3ff]
-        pix_data['TOA'] = _gray_14_lut[(data >> n14) & n3fff]
-        pix_data['EventCounter'] = np.zeros(len(data))
+        # When there are ToA extensions combine them with the hits
         if scan_id == 'DataTake':
-            pix_data['TOA_Extension'] = extensions & 0xFFFFFFFFFFFF
-            pix_data['TOA_Combined'] = (extensions & 0xFFFFFFFFC000) + pix_data['TOA']
-        else:
-            pix_data['TOA_Extension'] = np.zeros(len(data))
-            pix_data['TOA_Combined'] = np.zeros(len(data))
-    elif op_mode == 0b01:
-        pix_data['iTOT'] = np.zeros(len(data))
-        pix_data['TOT'] = np.zeros(len(data))
-        pix_data['TOA'] = _gray_14_lut[(data >> n14) & n3fff]
-        pix_data['EventCounter'] = np.zeros(len(data))
-        if scan_id == 'DataTake':
-            pix_data['TOA_Extension'] = extensions & 0xFFFFFFFFFFFF
-            pix_data['TOA_Combined'] = (extensions & 0xFFFFFFFFC000) + pix_data['TOA']
-        else:
-            pix_data['TOA_Extension'] = np.zeros(len(data))
-            pix_data['TOA_Combined'] = np.zeros(len(data))
-    else:
-        pix_data['iTOT'] = _lfsr_14_lut[(data >> n14) & n3fff]
-        pix_data['EventCounter'] = _lfsr_10_lut[(data >> n4) & n3ff]
-        pix_data['TOT'] = np.zeros(len(data))
-        pix_data['TOA'] = np.zeros(len(data))
-        if scan_id == 'DataTake':
-            pix_data['TOA_Extension'] = extensions & 0xFFFFFFFFFFFF
-            pix_data['TOA_Combined'] = (extensions & 0xFFFFFFFFC000) + pix_data['TOA']
-        else:
-            pix_data['TOA_Extension'] = np.zeros(len(data))
-            pix_data['TOA_Combined'] = np.zeros(len(data))
+            # Based on the indices of hits and ToA extensions combine them: Each hit should get the 
+            # extensions with the next lowest index
+            link0_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link0_hits_indices)
+            link1_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link1_hits_indices)
+            link2_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link2_hits_indices)
+            link3_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link3_hits_indices)
+            link4_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link4_hits_indices)
+            link5_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link5_hits_indices)
+            link6_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link6_hits_indices)
+            link7_hits_extensions_indices = np.searchsorted(full_timestamps_indices, link7_hits_indices)
 
-    # Only in the combined ToA/ToT mode there is ToT data as input for the
-    # timewalk correction and ToA data to correct
-    if timewalk_calib == True and op_mode == 0b00:
-        timewalk_toa, timewalk_ftoa = timewalk_correction(pix_data['TOT'], timewalk_a, timewalk_b, timewalk_c)
-        toa_offsets = timewalk_toa
-        if vco == True:
+            link0_hits_extensions_indices = np.maximum(link0_hits_extensions_indices - 1, 0)
+            link1_hits_extensions_indices = np.maximum(link1_hits_extensions_indices - 1, 0)
+            link2_hits_extensions_indices = np.maximum(link2_hits_extensions_indices - 1, 0)
+            link3_hits_extensions_indices = np.maximum(link3_hits_extensions_indices - 1, 0)
+            link4_hits_extensions_indices = np.maximum(link4_hits_extensions_indices - 1, 0)
+            link5_hits_extensions_indices = np.maximum(link5_hits_extensions_indices - 1, 0)
+            link6_hits_extensions_indices = np.maximum(link6_hits_extensions_indices - 1, 0)
+            link7_hits_extensions_indices = np.maximum(link7_hits_extensions_indices - 1, 0)
+
+            link0_hits_extensions = full_timestamps[link0_hits_extensions_indices]
+            link1_hits_extensions = full_timestamps[link1_hits_extensions_indices]
+            link2_hits_extensions = full_timestamps[link2_hits_extensions_indices]
+            link3_hits_extensions = full_timestamps[link3_hits_extensions_indices]
+            link4_hits_extensions = full_timestamps[link4_hits_extensions_indices]
+            link5_hits_extensions = full_timestamps[link5_hits_extensions_indices]
+            link6_hits_extensions = full_timestamps[link6_hits_extensions_indices]
+            link7_hits_extensions = full_timestamps[link7_hits_extensions_indices]
+
+            # Check if bit 12 and 13 of the ToA and the ToA extension are equal (they should be based on the firmware setting of the extension)
+            # For hits which dont fulfill this condition store their indices into a list, so that they can be corrected
+            link0_extension_offsets = np.where(np.bitwise_and(link0_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link0_hits, 14), 0x3fff)], 0x3000))[0]
+            link1_extension_offsets = np.where(np.bitwise_and(link1_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link1_hits, 14), 0x3fff)], 0x3000))[0]
+            link2_extension_offsets = np.where(np.bitwise_and(link2_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link2_hits, 14), 0x3fff)], 0x3000))[0]
+            link3_extension_offsets = np.where(np.bitwise_and(link3_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link3_hits, 14), 0x3fff)], 0x3000))[0]
+            link4_extension_offsets = np.where(np.bitwise_and(link4_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link4_hits, 14), 0x3fff)], 0x3000))[0]
+            link5_extension_offsets = np.where(np.bitwise_and(link5_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link5_hits, 14), 0x3fff)], 0x3000))[0]
+            link6_extension_offsets = np.where(np.bitwise_and(link6_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link6_hits, 14), 0x3fff)], 0x3000))[0]
+            link7_extension_offsets = np.where(np.bitwise_and(link7_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link7_hits, 14), 0x3fff)], 0x3000))[0]
+
+            # Shift the extension index for hits that dont fulfill the condition by -1
+            link0_hits_extensions[link0_extension_offsets] -= 1
+            link1_hits_extensions[link1_extension_offsets] -= 1
+            link2_hits_extensions[link2_extension_offsets] -= 1
+            link3_hits_extensions[link3_extension_offsets] -= 1
+            link4_hits_extensions[link4_extension_offsets] -= 1
+            link5_hits_extensions[link5_extension_offsets] -= 1
+            link6_hits_extensions[link6_extension_offsets] -= 1
+            link7_hits_extensions[link7_extension_offsets] -= 1
+
+            # Check again the overlap of the two bits after the correction
+            link0_extension_offsets = np.where(np.bitwise_and(link0_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link0_hits, 14), 0x3fff)], 0x3000))[0]
+            link1_extension_offsets = np.where(np.bitwise_and(link1_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link1_hits, 14), 0x3fff)], 0x3000))[0]
+            link2_extension_offsets = np.where(np.bitwise_and(link2_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link2_hits, 14), 0x3fff)], 0x3000))[0]
+            link3_extension_offsets = np.where(np.bitwise_and(link3_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link3_hits, 14), 0x3fff)], 0x3000))[0]
+            link4_extension_offsets = np.where(np.bitwise_and(link4_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link4_hits, 14), 0x3fff)], 0x3000))[0]
+            link5_extension_offsets = np.where(np.bitwise_and(link5_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link5_hits, 14), 0x3fff)], 0x3000))[0]
+            link6_extension_offsets = np.where(np.bitwise_and(link6_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link6_hits, 14), 0x3fff)], 0x3000))[0]
+            link7_extension_offsets = np.where(np.bitwise_and(link7_hits_extensions, 0x3000) != np.bitwise_and(_gray_14_lut[np.bitwise_and(np.right_shift(link7_hits, 14), 0x3fff)], 0x3000))[0]
+
+        # Combine the link specific lists dor hits and their indices
+        data = np.concatenate((link0_hits, link1_hits, link2_hits, link3_hits, link4_hits, link5_hits, link6_hits, link7_hits))
+        data_indices = np.concatenate((link0_hits_indices, link1_hits_indices, link2_hits_indices, link3_hits_indices, link4_hits_indices, link5_hits_indices, link6_hits_indices, link7_hits_indices))
+
+        # Sort by the indices
+        data_sort = np.argsort(data_indices)
+
+        # Apply the new order based on the indices to get the original order of hits
+        data = data[data_sort]
+        data_indices = data_indices[data_sort]
+
+        # If there are ToA extensions, combine also the link specific lists and apply the ordering
+        if scan_id == 'DataTake':
+            extensions = np.concatenate((link0_hits_extensions, link1_hits_extensions, link2_hits_extensions, link3_hits_extensions, link4_hits_extensions, link5_hits_extensions, link6_hits_extensions, link7_hits_extensions))
+            extensions = extensions[data_sort]
+
+        # Create a list of chunk indices with the length of the hit list, so that for each hit chunk specific information can be added
+        chunk_indices = np.searchsorted(start_indices, data_indices, side='right')
+        chunk_indices = np.maximum(chunk_indices - 1, 0)
+
+        # Create lists of the scan pararmeter ids and chunk start times for all hits based on the chunk indices
+        data_scan_param_ids = scan_param_id[chunk_indices]
+        data_chunk_start_time = chunk_start_time[chunk_indices]
+        #data_start_indices = start_indices[chunk_indices]
+
+        # Create a recarray for the hit data
+        data_type = {'names': ['data_header', 'header', 'hit_index', 'x',     'y',     'TOA',    'TOT',    'EventCounter', 'HitCounter', 'FTOA',  'scan_param_id', 'chunk_start_time', 'iTOT',   'TOA_Extension', 'TOA_Combined'],
+                    'formats': ['uint8',       'uint8',  'uint64', 'uint8', 'uint8', 'uint16', 'uint16', 'uint16',       'uint8',      'uint8', 'uint16',        'float',            'uint16', 'uint64',        'uint64']}
+        pix_data = np.recarray((data.shape[0]), dtype=data_type)
+
+        # Create some numpy numbers for the data interpretation
+        n47 = np.uint64(47)
+        n44 = np.uint64(44)
+        n28 = np.uint64(28)
+        n14 = np.uint(14)
+        n4 = np.uint64(4)
+        n3ff = np.uint64(0x3ff)
+        n3fff = np.uint64(0x3fff)
+        nf = np.uint64(0xf)
+
+        # Get the x and y coordinates of the hits based on the 3 Timepix3 coordinates (pixel, super_pixel and eoc)
+        pixel = (data >> n28) & np.uint64(0b111)
+        super_pixel = (data >> np.uint64(28 + 3)) & np.uint64(0x3f)
+        right_col = pixel > 3
+        eoc = (data >> np.uint64(28 + 9)) & np.uint64(0x7f)
+        pix_data['y'] = (super_pixel * 4) + (pixel - right_col * 4)
+        pix_data['x'] = eoc * 2 + right_col * 1
+
+        # Put the headers into the recarray
+        pix_data['data_header'] = data >> n47
+        pix_data['header'] = data >> n44
+
+        # Add chunk based information to the hits into the recarray
+        pix_data['scan_param_id'] = data_scan_param_ids
+        pix_data['chunk_start_time'] = data_chunk_start_time
+
+        # Write the original indices of word 0 per hit into the recarray
+        pix_data['hit_index'] = data_indices
+
+        # Write HitCounter and FTOA based on the run config ()
+        if(vco == False):
+            pix_data['HitCounter'] = _lfsr_4_lut[data & nf]
+            pix_data['FTOA'] = np.zeros(len(data))
+        else:
+            pix_data['HitCounter'] = np.zeros(len(data))
+            pix_data['FTOA'] = data & nf
+
+        # Based on the run mode write iToT, ToT, ToA, EventCounter, ToA_Extension and ToA_combined
+        if op_mode == 0b00:
+            pix_data['iTOT'] = np.zeros(len(data))
+            pix_data['TOT'] = _lfsr_10_lut[(data >> n4) & n3ff]
+            pix_data['TOA'] = _gray_14_lut[(data >> n14) & n3fff]
+            pix_data['EventCounter'] = np.zeros(len(data))
+            if scan_id == 'DataTake':
+                pix_data['TOA_Extension'] = extensions & 0xFFFFFFFFFFFF
+                pix_data['TOA_Combined'] = (extensions & 0xFFFFFFFFC000) + pix_data['TOA']
+            else:
+                pix_data['TOA_Extension'] = np.zeros(len(data))
+                pix_data['TOA_Combined'] = np.zeros(len(data))
+        elif op_mode == 0b01:
+            pix_data['iTOT'] = np.zeros(len(data))
+            pix_data['TOT'] = np.zeros(len(data))
+            pix_data['TOA'] = _gray_14_lut[(data >> n14) & n3fff]
+            pix_data['EventCounter'] = np.zeros(len(data))
+            if scan_id == 'DataTake':
+                pix_data['TOA_Extension'] = extensions & 0xFFFFFFFFFFFF
+                pix_data['TOA_Combined'] = (extensions & 0xFFFFFFFFC000) + pix_data['TOA']
+            else:
+                pix_data['TOA_Extension'] = np.zeros(len(data))
+                pix_data['TOA_Combined'] = np.zeros(len(data))
+        else:
+            pix_data['iTOT'] = _lfsr_14_lut[(data >> n14) & n3fff]
+            pix_data['EventCounter'] = _lfsr_10_lut[(data >> n4) & n3ff]
+            pix_data['TOT'] = np.zeros(len(data))
+            pix_data['TOA'] = np.zeros(len(data))
+            if scan_id == 'DataTake':
+                pix_data['TOA_Extension'] = extensions & 0xFFFFFFFFFFFF
+                pix_data['TOA_Combined'] = (extensions & 0xFFFFFFFFC000) + pix_data['TOA']
+            else:
+                pix_data['TOA_Extension'] = np.zeros(len(data))
+                pix_data['TOA_Combined'] = np.zeros(len(data))
+
+        # Only in the combined ToA/ToT mode there is ToT data as input for the
+        # timewalk correction and ToA data to correct
+        if timewalk_calib == True and op_mode == 0b00:
+            timewalk_toa, timewalk_ftoa = timewalk_correction(pix_data['TOT'], timewalk_a, timewalk_b, timewalk_c)
+            toa_offsets = timewalk_toa
+            if vco == True:
+                column_offset = (((pix_data['x']) // 2) % 16)
+                underflow_ftoa = column_offset + timewalk_ftoa > pix_data['FTOA']
+                pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
+                toa_offsets += np.where(underflow_ftoa, 1, 0)
+                underflow_ftoa = column_offset + timewalk_ftoa > pix_data['FTOA']
+                pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
+                toa_offsets += np.where(underflow_ftoa, 1, 0)
+                pix_data['FTOA'] = pix_data['FTOA'] - (column_offset + timewalk_ftoa)
+            underflow_toa = pix_data['TOA'] - toa_offsets > 16384
+            pix_data['TOA'] = np.where(underflow_toa, pix_data['TOA'] + 16384, pix_data['TOA'])
+            pix_data['TOA'] = pix_data['TOA'] - toa_offsets
+            pix_data['TOA_Combined'] = pix_data['TOA_Combined'] - toa_offsets
+        # In the only ToA mode with active VCO still the column clock offset can be corrected
+        elif op_mode == 0b01 and vco == True:
             column_offset = (((pix_data['x']) // 2) % 16)
-            underflow_ftoa = column_offset + timewalk_ftoa > pix_data['FTOA']
+            underflow_ftoa = column_offset > pix_data['FTOA']
             pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
             toa_offsets += np.where(underflow_ftoa, 1, 0)
-            underflow_ftoa = column_offset + timewalk_ftoa > pix_data['FTOA']
-            pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
-            toa_offsets += np.where(underflow_ftoa, 1, 0)
-            pix_data['FTOA'] = pix_data['FTOA'] - (column_offset + timewalk_ftoa)
-        underflow_toa = pix_data['TOA'] - toa_offsets > 16384
-        pix_data['TOA'] = np.where(underflow_toa, pix_data['TOA'] + 16384, pix_data['TOA'])
-        pix_data['TOA'] = pix_data['TOA'] - toa_offsets
-        pix_data['TOA_Combined'] = pix_data['TOA_Combined'] - toa_offsets
-    # In the only ToA mode with active VCO still the column clock offset can be corrected
-    elif op_mode == 0b01 and vco == True:
-        column_offset = (((pix_data['x']) // 2) % 16)
-        underflow_ftoa = column_offset > pix_data['FTOA']
-        pix_data['FTOA'] = np.where(underflow_ftoa, pix_data['FTOA'] + 16, pix_data['FTOA'])
-        toa_offsets += np.where(underflow_ftoa, 1, 0)
-        pix_data['FTOA'] = pix_data['FTOA'] - column_offset
-        underflow_toa = pix_data['TOA'] - toa_offsets > 16384
-        pix_data['TOA'] = np.where(underflow_toa, pix_data['TOA'] + 16384, pix_data['TOA'])
-        pix_data['TOA'] = pix_data['TOA'] - toa_offsets
-        pix_data['TOA_Combined'] = pix_data['TOA_Combined'] - toa_offsets
+            pix_data['FTOA'] = pix_data['FTOA'] - column_offset
+            underflow_toa = pix_data['TOA'] - toa_offsets > 16384
+            pix_data['TOA'] = np.where(underflow_toa, pix_data['TOA'] + 16384, pix_data['TOA'])
+            pix_data['TOA'] = pix_data['TOA'] - toa_offsets
+            pix_data['TOA_Combined'] = pix_data['TOA_Combined'] - toa_offsets
 
-    #print("Order data by timestamp")
-    pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
+        #print("Order data by timestamp")
+        pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
 
-    return pix_data
+        return pix_data
+    except Exception as e:
+        print(e)
+        data_type = {'names': ['data_header', 'header', 'hit_index', 'x',     'y',     'TOA',    'TOT',    'EventCounter', 'HitCounter', 'FTOA',  'scan_param_id', 'chunk_start_time', 'iTOT',   'TOA_Extension', 'TOA_Combined'],
+                    'formats': ['uint8',       'uint8',  'uint64', 'uint8', 'uint8', 'uint16', 'uint16', 'uint16',       'uint8',      'uint8', 'uint16',        'float',            'uint16', 'uint64',        'uint64']}
+        pix_data = np.recarray((0), dtype=data_type)
+        return pix_data
 
-def save_data(h5_filename_in, h5_filename_out, pix_data):
+def save_data(in_file, h5_filename_out, pix_data, append = False):
     # Open the output file
     print("Save data to output file")
-    with tb.open_file(h5_filename_out, 'w') as h5_file_out:    
+    with tb.open_file(h5_filename_out, 'a') as h5_file_out:    
         # If the interpreted node is already there remove it
+        if append:
+            table = h5_file_out.root.interpreted.run_0.hit_data
+            table.append(pix_data)
+            table.flush()
+        else:
+            try:
+                h5_file_out.remove_node(h5_file_out.root.interpreted, recursive=True)
+                print("Node interpreted already there")
+            except:
+                pass
+
+            # Create the groups and their attributes
+            interpreted = h5_file_out.create_group(h5_file_out.root, 'interpreted', 'interpreted')
+            h5_file_out.root.interpreted._v_attrs['TimepixVersion'] = np.array('Timepix3'.encode("ascii"), dtype=str)
+            h5_file_out.root.interpreted._v_attrs['centerChip'] = np.array([0])
+            h5_file_out.root.interpreted._v_attrs['runFolderKind'] = np.array('rfUnknown'.encode("ascii"), dtype=str)
+            h5_file_out.root.interpreted._v_attrs['runType'] = np.array('rfXrayFinger'.encode("ascii"), dtype=str)
+            run_0 = h5_file_out.create_group(h5_file_out.root.interpreted, 'run_0', 'run_0')
+            h5_file_out.root.interpreted.run_0._v_attrs['BadBatchCount'] = np.array([0])
+            h5_file_out.root.interpreted.run_0._v_attrs['BadSliceCount'] = np.array([0])
+            h5_file_out.root.interpreted.run_0._v_attrs['batchSize'] = np.array([100000000])
+            h5_file_out.root.interpreted.run_0._v_attrs['numChips'] = np.array([1])
+
+            # Create a table with the interpreted data
+            h5_file_out.create_table(h5_file_out.root.interpreted.run_0, 'hit_data', pix_data, filters=tb.Filters(complib='zlib', complevel=2))
+
+            # Copy the chip configuration from the input file to the output file
+            h5_file_out.create_group(h5_file_out.root.interpreted.run_0, 'configuration', 'Configuration')
+            in_file.copy_children(in_file.root.configuration, h5_file_out.root.interpreted.run_0.configuration)
+
+def error_correction(meta_data, h5_file_in, start_chunk, stop_chunk):
+    # Read the data onto arrays
+    meta_data_tmp = meta_data[start_chunk:stop_chunk]
+    discard_errors = meta_data_tmp['discard_error']
+    decode_errors = meta_data_tmp['decode_error']
+    errors = discard_errors + decode_errors
+    start_indices = meta_data_tmp['index_start']
+    stop_indices = meta_data_tmp['index_stop']
+    indices = np.array([np.arange(start, stop, 1, dtype=int) for start, stop in zip(start_indices, stop_indices)], dtype=object)
+    scan_param_id = meta_data_tmp['scan_param_id']
+    chunk_start_time = meta_data_tmp['timestamp_start']
+    discarded_packages = 0
+
+    # Get the chunks and the indices of data packages after chunks with errors
+    chunks_after_errors = np.where(errors != 0)[0] + 1
+    if len(chunks_after_errors) > 0:
+        if chunks_after_errors[-1] > (len(indices) - 1):
+            chunks_after_errors = chunks_after_errors[:-1]
+        #indices_after_errors = indices[chunks_after_errors]
+    
+    print("Correct data")
+    
+    i = 0
+    previous_move_to_next_chunk = []
+    for chunk_indices in tqdm(indices, desc="Chunk"):
+        # For chunks with errors do noting as they are anyway discarded
+        if errors[i] != 0:
+            i += 1
+            continue
+        # Ignore chunks without data
+        if len(chunk_indices) == 0:
+            i += 1
+            continue
+        # Based on the headers, filter for hit words and create a list of these words and a list of their indices
         try:
-            h5_file_out.remove_node(h5_file_out.root.interpreted, recursive=True)
-            print("Node interpreted already there")
+            current_raw_data = h5_file_in.root.raw_data[chunk_indices]
         except:
-            pass
+            print('Corrupted chunk')
+            errors[i] += 1
+            continue
+        hit_filter = np.where(np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) != 0b0101)
+        hits = current_raw_data[hit_filter]
+        hits_indices = chunk_indices[hit_filter]
+        hit_filter = None
 
-        # Create the groups and their attributes
-        interpreted = h5_file_out.create_group(h5_file_out.root, 'interpreted', 'interpreted')
-        h5_file_out.root.interpreted._v_attrs['TimepixVersion'] = np.array('Timepix3'.encode("ascii"), dtype=str)
-        h5_file_out.root.interpreted._v_attrs['centerChip'] = np.array([0])
-        h5_file_out.root.interpreted._v_attrs['runFolderKind'] = np.array('rfUnknown'.encode("ascii"), dtype=str)
-        h5_file_out.root.interpreted._v_attrs['runType'] = np.array('rfXrayFinger'.encode("ascii"), dtype=str)
-        run_0 = h5_file_out.create_group(h5_file_out.root.interpreted, 'run_0', 'run_0')
-        h5_file_out.root.interpreted.run_0._v_attrs['BadBatchCount'] = np.array([0])
-        h5_file_out.root.interpreted.run_0._v_attrs['BadSliceCount'] = np.array([0])
-        h5_file_out.root.interpreted.run_0._v_attrs['batchSize'] = np.array([100000000])
-        h5_file_out.root.interpreted.run_0._v_attrs['numChips'] = np.array([1])
+        # Only in "DataTake" the ToA extensions are active
+        if scan_id == 'DataTake':
+            # Based on the headers, filter for ToA extension words and create a list of these words and a list of their indices
+            timestamp_map = np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) == 0b0101
+            timestamp_filter = np.where(timestamp_map == True)
+            timestamps = current_raw_data[timestamp_filter]
+            timestamps_indices = chunk_indices[timestamp_filter]
 
-        # Create a table with the interpreted data
-        h5_file_out.create_table(h5_file_out.root.interpreted.run_0, 'hit_data', pix_data, filters=tb.Filters(complib='zlib', complevel=2))
+            # Split the lists in separate lists for word 0 and word 1 (based on header)
+            timestamps_0_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b01)[0]
+            timestamps_1_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b10)[0]
+            timestamps = None
+            timestamp_filter = None
+        current_raw_data = None
 
-        # Copy the chip configuration from the input file to the output file
-        h5_file_out.create_group(h5_file_out.root.interpreted.run_0, 'configuration', 'Configuration')
-        with tb.open_file(h5_filename_in, 'r+') as h5_file_in:
-            h5_file_in.copy_children(h5_file_in.root.configuration, h5_file_out.root.interpreted.run_0.configuration)
+        # Split the hit word list up into lists of words for the individual chip links
+        # First: create the filer for this
+        link0_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000000)
+        link1_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000010)
+        link2_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000100)
+        link3_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000110)
+        link4_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001000)
+        link5_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001010)
+        link6_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001100)
+        link7_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001110)
+
+        # Second: Filter the words
+        link0_words = hits[link0_hits_filter]
+        link1_words = hits[link1_hits_filter]
+        link2_words = hits[link2_hits_filter]
+        link3_words = hits[link3_hits_filter]
+        link4_words = hits[link4_hits_filter]
+        link5_words = hits[link5_hits_filter]
+        link6_words = hits[link6_hits_filter]
+        link7_words = hits[link7_hits_filter]
+
+        # Third: Apply the filter also to the indices
+        link0_words_indices = hits_indices[link0_hits_filter]
+        link1_words_indices = hits_indices[link1_hits_filter]
+        link2_words_indices = hits_indices[link2_hits_filter]
+        link3_words_indices = hits_indices[link3_hits_filter]
+        link4_words_indices = hits_indices[link4_hits_filter]
+        link5_words_indices = hits_indices[link5_hits_filter]
+        link6_words_indices = hits_indices[link6_hits_filter]
+        link7_words_indices = hits_indices[link7_hits_filter]
+        hits = None
+        hits_indices = None
+
+        # Split the hit list for the links up into separate lists with word 0 and word 1
+        # First: create the filter
+        link0_words0_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b0)[0]
+        link0_words1_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b1)[0]
+        link1_words0_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b0)[0]
+        link1_words1_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b1)[0]
+        link2_words0_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b0)[0]
+        link2_words1_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b1)[0]
+        link3_words0_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b0)[0]
+        link3_words1_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b1)[0]
+        link4_words0_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b0)[0]
+        link4_words1_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b1)[0]
+        link5_words0_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b0)[0]
+        link5_words1_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b1)[0]
+        link6_words0_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b0)[0]
+        link6_words1_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b1)[0]
+        link7_words0_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b0)[0]
+        link7_words1_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b1)[0]
+
+        copy_to_next_chunk = []
+        move_to_next_chunk = []
+        removed_indices = []
+
+        # If a current chunk is after a chunk with errors remove the first word per link if its the wrong one (word 0 instead of 1)
+        if i in chunks_after_errors:
+            if scan_id == 'DataTake':
+                if timestamps_0_filter[0] < timestamps_1_filter[0]:
+                    removed_indices.append(timestamps_indices[0])
+            if len(link0_words_indices) > 1:
+                if link0_words0_filter[0] < link0_words1_filter[0]:
+                    removed_indices.append(link0_words_indices[0])
+            elif len(link0_words_indices) > 0:
+                removed_indices.append(link0_words_indices[0])
+            if len(link1_words_indices) > 1:
+                if link1_words0_filter[0] < link1_words1_filter[0]:
+                    removed_indices.append(link1_words_indices[0])
+            elif len(link1_words_indices) > 0:
+                removed_indices.append(link1_words_indices[0])
+            if len(link2_words_indices) > 1:
+                if link2_words0_filter[0] < link2_words1_filter[0]:
+                    removed_indices.append(link2_words_indices[0])
+            elif len(link2_words_indices) > 0:
+                removed_indices.append(link2_words_indices[0])
+            if len(link3_words_indices) > 1:
+                if link3_words0_filter[0] < link3_words1_filter[0]:
+                    removed_indices.append(link3_words_indices[0])
+            elif len(link3_words_indices) > 0:
+                removed_indices.append(link3_words_indices[0])
+            if len(link4_words_indices) > 1:
+                if link4_words0_filter[0] < link4_words1_filter[0]:
+                    removed_indices.append(link4_words_indices[0])
+            elif len(link4_words_indices) > 0:
+                removed_indices.append(link4_words_indices[0])
+            if len(link5_words_indices) > 1:
+                if link5_words0_filter[0] < link5_words1_filter[0]:
+                    removed_indices.append(link5_words_indices[0])
+            elif len(link5_words_indices) > 0:
+                removed_indices.append(link5_words_indices[0])
+            if len(link6_words_indices) > 1:
+                if link6_words0_filter[0] < link6_words1_filter[0]:
+                    removed_indices.append(link6_words_indices[0])
+            elif len(link6_words_indices) > 0:
+                removed_indices.append(link6_words_indices[0])
+            if len(link7_words_indices) > 1:
+                if link7_words0_filter[0] < link7_words1_filter[0]:
+                    removed_indices.append(link7_words_indices[0])
+            elif len(link7_words_indices) > 0:
+                removed_indices.append(link7_words_indices[0])
+
+        if i + 1 < len(indices):
+            # If the difference of 0 and 1 packages is bigger than 0 remove the chunk as there is some error
+            if np.abs(len(link0_words0_filter) - len(link0_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link1_words0_filter) - len(link1_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link2_words0_filter) - len(link2_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link3_words0_filter) - len(link3_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link4_words0_filter) - len(link4_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link5_words0_filter) - len(link5_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link6_words0_filter) - len(link6_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+            if np.abs(len(link7_words0_filter) - len(link7_words1_filter)) > 1:
+                errors[i] += 1
+                chunks_after_errors = np.append(chunks_after_errors, i+1)
+                i += 1
+                continue
+
+        # If the chunk (per link) ends with a word 1 without fitting word 0 move the word 1 to the next chunk
+        if scan_id == 'DataTake':
+            if timestamps_0_filter[-1] < timestamps_1_filter[-1]:
+                move_to_next_chunk.append(timestamps_indices[-1])
+                copy_to_next_chunk.append(timestamps_indices[-3:-1])
+            else:
+                copy_to_next_chunk.append(timestamps_indices[-2:])
+        if len(link0_words_indices) > 1:
+            if link0_words0_filter[-1] < link0_words1_filter[-1]:
+                move_to_next_chunk.append(link0_words_indices[-1])
+        elif len(link0_words_indices) > 0:
+            move_to_next_chunk.append(link0_words_indices[-1])
+        if len(link1_words_indices) > 1:
+            if link1_words0_filter[-1] < link1_words1_filter[-1]:
+                move_to_next_chunk.append(link1_words_indices[-1])
+        elif len(link1_words_indices) > 0:
+            move_to_next_chunk.append(link1_words_indices[-1])
+        if len(link2_words_indices) > 1:
+            if link2_words0_filter[-1] < link2_words1_filter[-1]:
+                move_to_next_chunk.append(link2_words_indices[-1])
+        elif len(link2_words_indices) > 0:
+            move_to_next_chunk.append(link2_words_indices[-1])
+        if len(link3_words_indices) > 1:
+            if link3_words0_filter[-1] < link3_words1_filter[-1]:
+                move_to_next_chunk.append(link3_words_indices[-1])
+        elif len(link3_words_indices) > 0:
+            move_to_next_chunk.append(link3_words_indices[-1])
+        if len(link4_words_indices) > 1:
+            if link4_words0_filter[-1] < link4_words1_filter[-1]:
+                move_to_next_chunk.append(link4_words_indices[-1])
+        elif len(link4_words_indices) > 0:
+            move_to_next_chunk.append(link4_words_indices[-1])
+        if len(link5_words_indices) > 1:
+            if link5_words0_filter[-1] < link5_words1_filter[-1]:
+                move_to_next_chunk.append(link5_words_indices[-1])
+        elif len(link5_words_indices) > 0:
+            move_to_next_chunk.append(link5_words_indices[-1])
+        if len(link6_words_indices) > 1:
+            if link6_words0_filter[-1] < link6_words1_filter[-1]:
+                move_to_next_chunk.append(link6_words_indices[-1])
+        elif len(link6_words_indices) > 0:
+            move_to_next_chunk.append(link6_words_indices[-1])
+        if len(link7_words_indices) > 1:
+            if link7_words0_filter[-1] < link7_words1_filter[-1]:
+                move_to_next_chunk.append(link7_words_indices[-1])
+        elif len(link7_words_indices) > 0:
+            move_to_next_chunk.append(link7_words_indices[-1])
+
+        # Move only packages to the next chunk that were not already moved to the current chunk
+        move_to_next_chunk = np.setdiff1d(move_to_next_chunk, previous_move_to_next_chunk)
+
+        # Create the new indice lists for the current and the next chunk
+        new_indices = chunk_indices
+        if len(removed_indices) > 0:
+            new_indices = np.setdiff1d(new_indices, removed_indices)
+            discarded_packages += len(removed_indices)
+        if i + 1 < len(indices) and len(move_to_next_chunk) > 0:
+            indices[i+1] = np.append(indices[i+1], move_to_next_chunk)
+            indices[i+1] = np.sort(indices[i+1])
+            new_indices = np.setdiff1d(new_indices, move_to_next_chunk)
+        if i + 1 < len(indices) and len(copy_to_next_chunk) > 0:
+            indices[i+1] = np.append(indices[i+1], copy_to_next_chunk)
+            indices[i+1] = np.sort(indices[i+1])
+
+        previous_move_to_next_chunk = move_to_next_chunk
+
+        indices[i] = new_indices
+        i += 1
+    
+    j = 0
+    for chunk_errors in errors:
+        if chunk_errors > 0:
+            discarded_packages += len(indices[j])
+        j += 1
+    indices = indices[np.where(errors == 0)[0]]
+    print("Discarded packages", discarded_packages, "of", stop_indices[-1]-start_indices[0], "(", 100. * (discarded_packages / (stop_indices[-1]-start_indices[0])), "%)")
+    return indices, scan_param_id, chunk_start_time, start_indices
 
 if len(sys.argv) == 3 or len(sys.argv) == 6:
     input_filename = sys.argv[1]
@@ -604,290 +853,69 @@ if len(sys.argv) == 3 or len(sys.argv) == 6:
         vco = [row[1] for row in general_config if row[0]==b'Fast_Io_en'][0]
         scan_id = [row[1] for row in run_config if row[0]==b'scan_id'][0].decode()
 
-        # Read the data onto arrays
-        meta_data_tmp = meta_data[0:]
-        discard_errors = meta_data_tmp['discard_error']
-        decode_errors = meta_data_tmp['decode_error']
-        errors = discard_errors + decode_errors
-        start_indices = meta_data_tmp['index_start']
-        stop_indices = meta_data_tmp['index_stop']
-        indices = np.array([np.arange(start, stop, 1, dtype=int) for start, stop in zip(start_indices, stop_indices)], dtype=object)
-        scan_param_id = meta_data_tmp['scan_param_id']
-        chunk_start_time = meta_data_tmp['timestamp_start']
-        discarded_packages = 0
+        chunks = meta_data.shape[0]
+        print("There are ", chunks, "in the file")
+        new_interpretation = True
 
-        # Get the chunks and the indices of data packages after chunks with errors
-        chunks_after_errors = np.where(errors != 0)[0] + 1
-        if len(chunks_after_errors) > 0:
-            if chunks_after_errors[-1] > (len(indices) - 1):
-                chunks_after_errors = chunks_after_errors[:-1]
-            #indices_after_errors = indices[chunks_after_errors]
-        
-        print("Correct data")
-        
-        i = 0
-        for chunk_indices in tqdm(indices, desc="Chunk"):
-            # For chunks with errors do noting as they are anyway discarded
-            if errors[i] != 0:
-                i += 1
-                continue
-            # Ignore chunks without data
-            if len(chunk_indices) == 0:
-                i += 1
-                continue
+        # For files with a lot chunks slice it based on packages
+        if chunks > 50000:
+            start = 0
+            stop = 0
+            
+            while stop < chunks:
+                n=0
+                # Add chunks to the current slice until there are 400 million packages
+                while n<400000000:
+                    if stop == chunks:
+                        break
+                    else:
+                        stop +=1
+                        n += meta_data[stop-1]['data_length']
 
-            # Based on the headers, filter for hit words and create a list of these words and a list of their indices
-            current_raw_data = h5_file_in.root.raw_data[chunk_indices]
-            hit_filter = np.where(np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) != 0b0101)
-            hits = current_raw_data[hit_filter]
-            hits_indices = chunk_indices[hit_filter]
-            hit_filter = None
-
-            # Only in "DataTake" the ToA extensions are active
-            if scan_id == 'DataTake':
-                # Based on the headers, filter for ToA extension words and create a list of these words and a list of their indices
-                timestamp_map = np.right_shift(np.bitwise_and(current_raw_data, 0xf0000000), 28) == 0b0101
-                timestamp_filter = np.where(timestamp_map == True)
-                timestamps = current_raw_data[timestamp_filter]
-                timestamps_indices = chunk_indices[timestamp_filter]
-
-                # Split the lists in separate lists for word 0 and word 1 (based on header)
-                timestamps_0_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b01)[0]
-                timestamps_1_filter = np.where(np.right_shift(np.bitwise_and(timestamps, 0x3000000), 24) == 0b10)[0]
-                timestamps = None
-                timestamp_filter = None
-            current_raw_data = None
-
-            # Split the hit word list up into lists of words for the individual chip links
-            # First: create the filer for this
-            link0_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000000)
-            link1_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000010)
-            link2_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000100)
-            link3_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00000110)
-            link4_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001000)
-            link5_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001010)
-            link6_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001100)
-            link7_hits_filter = np.where(np.right_shift(np.bitwise_and(hits, 0xfe000000), 24) == 0b00001110)
-
-            # Second: Filter the words
-            link0_words = hits[link0_hits_filter]
-            link1_words = hits[link1_hits_filter]
-            link2_words = hits[link2_hits_filter]
-            link3_words = hits[link3_hits_filter]
-            link4_words = hits[link4_hits_filter]
-            link5_words = hits[link5_hits_filter]
-            link6_words = hits[link6_hits_filter]
-            link7_words = hits[link7_hits_filter]
-
-            # Third: Apply the filter also to the indices
-            link0_words_indices = hits_indices[link0_hits_filter]
-            link1_words_indices = hits_indices[link1_hits_filter]
-            link2_words_indices = hits_indices[link2_hits_filter]
-            link3_words_indices = hits_indices[link3_hits_filter]
-            link4_words_indices = hits_indices[link4_hits_filter]
-            link5_words_indices = hits_indices[link5_hits_filter]
-            link6_words_indices = hits_indices[link6_hits_filter]
-            link7_words_indices = hits_indices[link7_hits_filter]
-            hits = None
-            hits_indices = None
-
-            # Split the hit list for the links up into separate lists with word 0 and word 1
-            # First: create the filter
-            link0_words0_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b0)[0]
-            link0_words1_filter = np.where(np.right_shift(np.bitwise_and(link0_words, 0x1000000), 24) == 0b1)[0]
-            link1_words0_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b0)[0]
-            link1_words1_filter = np.where(np.right_shift(np.bitwise_and(link1_words, 0x1000000), 24) == 0b1)[0]
-            link2_words0_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b0)[0]
-            link2_words1_filter = np.where(np.right_shift(np.bitwise_and(link2_words, 0x1000000), 24) == 0b1)[0]
-            link3_words0_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b0)[0]
-            link3_words1_filter = np.where(np.right_shift(np.bitwise_and(link3_words, 0x1000000), 24) == 0b1)[0]
-            link4_words0_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b0)[0]
-            link4_words1_filter = np.where(np.right_shift(np.bitwise_and(link4_words, 0x1000000), 24) == 0b1)[0]
-            link5_words0_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b0)[0]
-            link5_words1_filter = np.where(np.right_shift(np.bitwise_and(link5_words, 0x1000000), 24) == 0b1)[0]
-            link6_words0_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b0)[0]
-            link6_words1_filter = np.where(np.right_shift(np.bitwise_and(link6_words, 0x1000000), 24) == 0b1)[0]
-            link7_words0_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b0)[0]
-            link7_words1_filter = np.where(np.right_shift(np.bitwise_and(link7_words, 0x1000000), 24) == 0b1)[0]
-
-            copy_to_next_chunk = []
-            move_to_next_chunk = []
-            removed_indices = []
-
-            # If a current chunk is after a chunk with errors remove the first word per link if its the wrong one (word 0 instead of 1)
-            if i in chunks_after_errors:
-                if scan_id == 'DataTake':
-                    if timestamps_0_filter[0] < timestamps_1_filter[0]:
-                        removed_indices.append(timestamps_indices[0])
-                if len(link0_words_indices) > 1:
-                    if link0_words0_filter[0] < link0_words1_filter[0]:
-                        removed_indices.append(link0_words_indices[0])
-                elif len(link0_words_indices) > 0:
-                    removed_indices.append(link0_words_indices[0])
-                if len(link1_words_indices) > 1:
-                    if link1_words0_filter[0] < link1_words1_filter[0]:
-                        removed_indices.append(link1_words_indices[0])
-                elif len(link1_words_indices) > 0:
-                    removed_indices.append(link1_words_indices[0])
-                if len(link2_words_indices) > 1:
-                    if link2_words0_filter[0] < link2_words1_filter[0]:
-                        removed_indices.append(link2_words_indices[0])
-                elif len(link2_words_indices) > 0:
-                    removed_indices.append(link2_words_indices[0])
-                if len(link3_words_indices) > 1:
-                    if link3_words0_filter[0] < link3_words1_filter[0]:
-                        removed_indices.append(link3_words_indices[0])
-                elif len(link3_words_indices) > 0:
-                    removed_indices.append(link3_words_indices[0])
-                if len(link4_words_indices) > 1:
-                    if link4_words0_filter[0] < link4_words1_filter[0]:
-                        removed_indices.append(link4_words_indices[0])
-                elif len(link4_words_indices) > 0:
-                    removed_indices.append(link4_words_indices[0])
-                if len(link5_words_indices) > 1:
-                    if link5_words0_filter[0] < link5_words1_filter[0]:
-                        removed_indices.append(link5_words_indices[0])
-                elif len(link5_words_indices) > 0:
-                    removed_indices.append(link5_words_indices[0])
-                if len(link6_words_indices) > 1:
-                    if link6_words0_filter[0] < link6_words1_filter[0]:
-                        removed_indices.append(link6_words_indices[0])
-                elif len(link6_words_indices) > 0:
-                    removed_indices.append(link6_words_indices[0])
-                if len(link7_words_indices) > 1:
-                    if link7_words0_filter[0] < link7_words1_filter[0]:
-                        removed_indices.append(link7_words_indices[0])
-                elif len(link7_words_indices) > 0:
-                    removed_indices.append(link7_words_indices[0])
-
-            if i + 1 < len(indices):
-                # If the difference of 0 and 1 packages is bigger than 0 remove the chunk as there is some error
-                if np.abs(len(link0_words0_filter) - len(link0_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
+                print('Analyse chunks ' + str(start) + ' to ' + str(stop))
+                indices, scan_param_id, chunk_start_time, start_indices = error_correction(meta_data, h5_file_in, start, stop)
+                
+                args = []
+                print("Prepare interpretation")
+                for index_list in tqdm(indices, desc="Chunk"):
+                    if len(index_list) == 0:
+                        print("no data in chunk")
+                        continue
+                    args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time, start_indices, timewalk_calib, timewalk_a, timewalk_b, timewalk_c])
+                print("args ",len(args))
+                print("indices ", len(indices))
+                print("Interpret data")
+                if len(args) == 0:
+                    start = stop
                     continue
-                if np.abs(len(link1_words0_filter) - len(link1_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
-                if np.abs(len(link2_words0_filter) - len(link2_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
-                if np.abs(len(link3_words0_filter) - len(link3_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
-                if np.abs(len(link4_words0_filter) - len(link4_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
-                if np.abs(len(link5_words0_filter) - len(link5_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
-                if np.abs(len(link6_words0_filter) - len(link6_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
-                if np.abs(len(link7_words0_filter) - len(link7_words1_filter)) > 1:
-                    errors[i] += 1
-                    chunks_after_errors = np.append(chunks_after_errors, i+1)
-                    i += 1
-                    continue
+                with Pool(4) as pool:
+                    pix_data = list(tqdm(pool.imap(interpret_data, args, 100), total=len(args), desc="Chunk"))
+                pix_data = np.concatenate(pix_data)
 
-            # If the chunk (per link) ends with a word 1 without fitting word 0 move the word 1 to the next chunk
-            if scan_id == 'DataTake':
-                if timestamps_0_filter[-1] < timestamps_1_filter[-1]:
-                    move_to_next_chunk.append(timestamps_indices[-1])
-                    copy_to_next_chunk.append(timestamps_indices[-3:-1])
+                print("Order data by timestamp")
+                pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
+                if new_interpretation:
+                    save_data(h5_file_in, output_filename, pix_data, False)
+                    new_interpretation = False
                 else:
-                    copy_to_next_chunk.append(timestamps_indices[-2:])
-            if len(link0_words_indices) > 1:
-                if link0_words0_filter[-1] < link0_words1_filter[-1]:
-                    move_to_next_chunk.append(link0_words_indices[-1])
-            elif len(link0_words_indices) > 0:
-                move_to_next_chunk.append(link0_words_indices[-1])
-            if len(link1_words_indices) > 1:
-                if link1_words0_filter[-1] < link1_words1_filter[-1]:
-                    move_to_next_chunk.append(link1_words_indices[-1])
-            elif len(link1_words_indices) > 0:
-                move_to_next_chunk.append(link1_words_indices[-1])
-            if len(link2_words_indices) > 1:
-                if link2_words0_filter[-1] < link2_words1_filter[-1]:
-                    move_to_next_chunk.append(link2_words_indices[-1])
-            elif len(link2_words_indices) > 0:
-                move_to_next_chunk.append(link2_words_indices[-1])
-            if len(link3_words_indices) > 1:
-                if link3_words0_filter[-1] < link3_words1_filter[-1]:
-                    move_to_next_chunk.append(link3_words_indices[-1])
-            elif len(link3_words_indices) > 0:
-                move_to_next_chunk.append(link3_words_indices[-1])
-            if len(link4_words_indices) > 1:
-                if link4_words0_filter[-1] < link4_words1_filter[-1]:
-                    move_to_next_chunk.append(link4_words_indices[-1])
-            elif len(link4_words_indices) > 0:
-                move_to_next_chunk.append(link4_words_indices[-1])
-            if len(link5_words_indices) > 1:
-                if link5_words0_filter[-1] < link5_words1_filter[-1]:
-                    move_to_next_chunk.append(link5_words_indices[-1])
-            elif len(link5_words_indices) > 0:
-                move_to_next_chunk.append(link5_words_indices[-1])
-            if len(link6_words_indices) > 1:
-                if link6_words0_filter[-1] < link6_words1_filter[-1]:
-                    move_to_next_chunk.append(link6_words_indices[-1])
-            elif len(link6_words_indices) > 0:
-                move_to_next_chunk.append(link6_words_indices[-1])
-            if len(link7_words_indices) > 1:
-                if link7_words0_filter[-1] < link7_words1_filter[-1]:
-                    move_to_next_chunk.append(link7_words_indices[-1])
-            elif len(link7_words_indices) > 0:
-                move_to_next_chunk.append(link7_words_indices[-1])
+                    save_data(h5_file_in, output_filename, pix_data, True)
+                pix_data = []
+                start = stop
+        else:
+            indices, scan_param_id, chunk_start_time, start_indices = error_correction(meta_data, h5_file_in, 0, chunks)
+            args = []
+            print("Prepare interpretation")
+            for index_list in tqdm(indices, desc="Chunk"):
+                args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time, start_indices, timewalk_calib, timewalk_a, timewalk_b, timewalk_c])
 
-            # Create the new indice lists for the current and the next chunk
-            new_indices = chunk_indices
-            if len(removed_indices) > 0:
-                new_indices = np.setdiff1d(new_indices, removed_indices)
-                discarded_packages += len(removed_indices)
-            if i + 1 < len(indices) and len(move_to_next_chunk) > 0:
-                indices[i+1] = np.append(indices[i+1], move_to_next_chunk)
-                indices[i+1] = np.sort(indices[i+1])
-                new_indices = np.setdiff1d(new_indices, move_to_next_chunk)
-            if i + 1 < len(indices) and len(copy_to_next_chunk) > 0:
-                indices[i+1] = np.append(indices[i+1], copy_to_next_chunk)
-                indices[i+1] = np.sort(indices[i+1])
+            print("Interpret data")
+            with Pool(4) as pool:
+                pix_data = list(tqdm(pool.imap(interpret_data, args, 100), total=len(args), desc="Chunk"))
+            pix_data = np.concatenate(pix_data)
 
-            indices[i] = new_indices
-            i += 1
-        
-        j = 0
-        for chunk_errors in errors:
-            if chunk_errors > 0:
-                discarded_packages += len(indices[j])
-            j += 1
-        indices = indices[np.where(errors == 0)[0]]
-        print("Discarded packages", discarded_packages, "of", stop_indices[-1], "(", 100. * (discarded_packages / stop_indices[-1]), "%)")
-
-    args = []
-    print("Prepare interpretation")
-    for index_list in tqdm(indices, desc="Chunk"):
-        args.append([input_filename, index_list, op_mode, vco, scan_id, scan_param_id, chunk_start_time, timewalk_calib, timewalk_a, timewalk_b, timewalk_c])
-
-    print("Interpret data")
-    with Pool(4) as pool:
-        pix_data = list(tqdm(pool.imap(interpret_data, args, 100), total=len(args), desc="Chunk"))
-    pix_data = np.concatenate(pix_data)
-
-    print("Order data by timestamp")
-    pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
-    save_data(input_filename, output_filename, pix_data)
+            print("Order data by timestamp")
+            pix_data = pix_data[pix_data['TOA_Combined'].argsort()]
+            save_data(h5_file_in, output_filename, pix_data)
 
 else:
     print("Please enter the data paths of the input and the output file (python tpx3_interpretation.py <input path> <output path>)")
